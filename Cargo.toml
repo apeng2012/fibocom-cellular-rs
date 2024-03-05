@@ -37,8 +37,6 @@ embedded-hal = "1.0.0"
 embedded-nal = "0.8"
 embedded-nal-async = { version = "0.7" }
 
-embassy-at-cmux = { path = "../embassy/embassy-at-cmux", optional = true }
-embassy-net-ppp = { version = "0.1", optional = true }
 embassy-net = { version = "0.4", features = [
     "proto-ipv4",
     "medium-ip",
@@ -52,10 +50,9 @@ atat = { version = "*", features = ["heapless"] }
 
 
 [features]
-default = ["socket-udp", "socket-tcp", "ppp"]
+default = ["socket-udp", "socket-tcp", "internal-network-stack"]
 
 internal-network-stack = ["dep:ublox-sockets"]
-ppp = ["dep:embassy-at-cmux", "dep:embassy-net-ppp", "dep:embassy-net"]
 
 automatic-apn = []
 upsd-context-activation = []
@@ -71,9 +68,7 @@ defmt = [
     "embassy-sync/defmt",
     "embassy-futures/defmt",
     "ublox-sockets?/defmt",
-    "embassy-net-ppp?/defmt",
     "embassy-net?/defmt",
-    "embassy-at-cmux?/defmt",
 ]
 log = ["dep:log", "ublox-sockets?/log", "atat/log"]
 
@@ -100,14 +95,12 @@ exclude = ["examples"]
 #ublox-sockets = { git = "https://github.com/BlackbirdHQ/ublox-sockets", branch = "feature/async-borrowed-sockets" }
 no-std-net = { git = "https://github.com/rushmorem/no-std-net", branch = "issue-15" }
 #ublox-sockets = { path = "../ublox-sockets" }
-# atat = { git = "https://github.com/BlackbirdHQ/atat", branch = "master" }
+atat = { git = "https://github.com/BlackbirdHQ/atat", branch = "master" }
 embassy-time = { git = "https://github.com/embassy-rs/embassy", branch = "main" }
 embassy-sync = { git = "https://github.com/embassy-rs/embassy", branch = "main" }
 embassy-futures = { git = "https://github.com/embassy-rs/embassy", branch = "main" }
-embassy-net-ppp = { git = "https://github.com/embassy-rs/embassy", branch = "main" }
 embassy-net = { git = "https://github.com/embassy-rs/embassy", branch = "main" }
 
 #embassy-time = { path = "../embassy/embassy-time" }
 #embassy-sync = { path = "../embassy/embassy-sync" }
 #embassy-futures = { path = "../embassy/embassy-futures" }
-atat = { path = "../atat/atat" }
