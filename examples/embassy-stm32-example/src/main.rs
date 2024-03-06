@@ -7,6 +7,7 @@ use defmt::*;
 use embassy_executor::Spawner;
 use embassy_stm32::gpio::{Input, Output};
 use embassy_stm32::peripherals::USART3;
+use embassy_stm32::time::Hertz;
 use embassy_stm32::usart::{BufferedUart, BufferedUartRx, BufferedUartTx};
 use embassy_stm32::{bind_interrupts, peripherals, Config};
 use embassy_time::{Duration, Timer};
@@ -65,7 +66,27 @@ impl<'a> CellularConfig<'a> for MyCelullarConfig {
 
 #[embassy_executor::main]
 async fn main_task(spawner: Spawner) {
-    let config = Config::default();
+    let mut config = Config::default();
+    {
+        use embassy_stm32::rcc::*;
+
+        config.rcc.hse = Some(Hse {
+            freq: Hertz(8_000_000),
+            mode: HseMode::Oscillator,
+        });
+        // PLL uses HSE as the clock source
+        config.rcc.pll = Some(Pll {
+            src: PllSource::HSE,
+            prediv: PllPreDiv::DIV1,
+            mul: PllMul::MUL9,
+        });
+        // System clock comes from PLL (= the 72 MHz main PLL output)
+        config.rcc.sys = Sysclk::PLL1_P;
+        // 72 MHz / 2 = 36 MHz APB1 frequency
+        config.rcc.apb1_pre = APBPrescaler::DIV2;
+        // 72 MHz / 1 = 72 MHz APB2 frequency
+        config.rcc.apb2_pre = APBPrescaler::DIV1;
+    }
     let p = embassy_stm32::init(config);
 
     let mut uart_config = embassy_stm32::usart::Config::default();
