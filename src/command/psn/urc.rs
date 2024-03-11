@@ -2,25 +2,15 @@
 use super::types::{
     EPSNetworkRegistrationStat, ExtendedPSNetworkRegistrationState, GPRSNetworkRegistrationStat,
 };
-use crate::{command::network_service::types::RatAct, command::psn::types::ProfileId};
-use atat::atat_derive::AtatResp;
-use embedded_nal::IpAddr;
+use crate::command::network_service::types::RatAct;
+use atat::{atat_derive::AtatResp, heapless_bytes::Bytes};
 use heapless::String;
 
-/// +UUPSDA
+/// +MIPCALL
 #[derive(Debug, Clone, AtatResp)]
 pub struct DataConnectionActivated {
     #[at_arg(position = 0)]
-    pub result: u8,
-    #[at_arg(position = 1, len = 39)]
-    pub ip_addr: Option<IpAddr>,
-}
-
-/// +UUPSDD
-#[derive(Debug, Clone, AtatResp)]
-pub struct DataConnectionDeactivated {
-    #[at_arg(position = 0)]
-    pub profile_id: ProfileId,
+    pub b: Bytes<41>,
 }
 
 /// 18.27 GPRS network registration status +CGREG

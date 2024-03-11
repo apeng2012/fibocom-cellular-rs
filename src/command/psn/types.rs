@@ -476,41 +476,6 @@ pub enum PacketSwitchedAction {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, AtatEnum)]
-pub enum PacketSwitchedNetworkDataParam {
-    /// • 0: IP address: dynamic IP address assigned during PDP context
-    /// activation;
-    IPAddress = 0,
-    /// • 1: DNS1: dynamic primary DNS address;
-    DNS1 = 1,
-    /// • 2: DNS2: dynamic secondary DNS address;
-    DNS2 = 2,
-    /// • 3: QoS precedence: network assigned precedence class of the QoS;
-    QoSPrecedence = 3,
-    /// • 4: QoS delay: network assigned delay class of the QoS;
-    QoSDelay = 4,
-    /// • 5: QoS reliability: network assigned reliability class of the QoS;
-    QoSReliability = 5,
-    /// • 6: QoS peak rate: network assigned peak rate value of the QoS;
-    QoSPeakRate = 6,
-    /// • 7: QoS mean rate: network assigned mean rate value of the QoS
-    QoSMeanRate = 7,
-    /// • 8: PSD profile status: if the profile is active the return value is 1,
-    /// 0 otherwise
-    PsdProfileStatus = 8,
-    /// • 9: 3G QoS delivery order
-    QoS3GDeliveryOrder = 9,
-    /// • 10: 3G QoS erroneous SDU delivery • 11: 3G QoS extended guaranteed
-    /// downlink bit rate • 12: 3G QoS extended maximum downlink bit rate • 13:
-    /// 3G QoS guaranteed downlink bit rate • 14: 3G QoS guaranteed uplink bit
-    /// rate • 15: 3G QoS maximum downlink bit rate • 16: 3G QoS maximum uplink
-    /// bit rate • 17: 3G QoS maximum SDU size • 18: 3G QoS residual bit error
-    /// rate • 19: 3G QoS SDU error ratio • 20: 3G QoS signalling indicator •
-    /// 21: 3G QoS source statistics descriptor • 22: 3G QoS traffic class • 23:
-    /// 3G QoS traffic priority • 24: 3G QoS transfer delay
-    QoS3GTransferDelay = 24,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, AtatEnum)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum GPRSAttachedState {
     /// • 0: Detached

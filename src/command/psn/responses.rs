@@ -3,7 +3,7 @@ use super::types::{
     ContextId, EPSNetworkRegistrationStat, EPSNetworkRegistrationUrcConfig,
     ExtendedPSNetworkRegistrationState, ExtendedPSNetworkRegistrationUrcConfig, GPRSAttachedState,
     GPRSNetworkRegistrationStat, GPRSNetworkRegistrationUrcConfig, PDPContextStatus,
-    PacketSwitchedNetworkDataParam, PacketSwitchedParam, ProfileId,
+    PacketSwitchedParam, ProfileId,
 };
 use crate::command::network_service::types::RatAct;
 use atat::atat_derive::AtatResp;
@@ -21,20 +21,6 @@ pub struct PacketSwitchedConfig {
     pub profile_id: ProfileId,
     #[at_arg(position = 1)]
     pub param: PacketSwitchedParam,
-}
-
-/// 18.9 Packet switched network-assigned data +UPSND Returns the current
-/// (dynamic) network-assigned or network-negotiated value of the specified
-/// parameter for the active PDP context associated with the specified PSD
-/// profile.
-#[derive(Debug, AtatResp)]
-pub struct PacketSwitchedNetworkData {
-    #[at_arg(position = 0)]
-    pub profile: ProfileId,
-    #[at_arg(position = 1)]
-    pub param: PacketSwitchedNetworkDataParam,
-    #[at_arg(position = 2)]
-    pub param_tag: u8, // TODO: Create struct to contain
 }
 
 /// 18.14 GPRS attach or detach +CGATT Register (attach) the MT to, or

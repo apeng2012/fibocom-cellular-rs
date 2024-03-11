@@ -6,22 +6,14 @@ use super::types::{
 use atat::atat_derive::AtatResp;
 use heapless::String;
 
-/// 7.4 Extended signal quality +CESQ
+/// 9.1.1 Extended signal quality +CSQ
 #[derive(Debug, Clone, AtatResp)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct SignalQuality {
     #[at_arg(position = 0)]
-    pub rxlev: u8,
+    pub rssi: u8,
     #[at_arg(position = 1)]
     pub ber: u8,
-    #[at_arg(position = 2)]
-    pub rscp: u8,
-    #[at_arg(position = 3)]
-    pub ecn0: u8,
-    #[at_arg(position = 4)]
-    pub rsrq: u8,
-    #[at_arg(position = 5)]
-    pub rsrp: u8,
 }
 
 /// 7.5 Operator selection +COPS

@@ -65,7 +65,7 @@ impl State {
     pub const fn new() -> Self {
         Self {
             shared: Mutex::new(RefCell::new(Shared {
-                link_state: LinkState::Down,
+                link_state: None,
                 power_state: OperationState::PowerDown,
                 desired_state: OperationState::PowerDown,
                 waker: WakerRegistration::new(),
@@ -83,7 +83,7 @@ impl State {
 
 /// State of the LinkState
 pub struct Shared {
-    link_state: LinkState,
+    link_state: Option<LinkState>,
     power_state: OperationState,
     desired_state: OperationState,
     waker: WakerRegistration,
@@ -110,7 +110,7 @@ impl<'d> Runner<'d> {
         }
     }
 
-    pub fn set_link_state(&mut self, state: LinkState) {
+    pub fn set_link_state(&mut self, state: Option<LinkState>) {
         self.shared.lock(|s| {
             let s = &mut *s.borrow_mut();
             s.link_state = state;
@@ -139,7 +139,7 @@ impl<'d> Runner<'d> {
 }
 
 impl<'d> StateRunner<'d> {
-    pub fn set_link_state(&self, state: LinkState) {
+    pub fn set_link_state(&self, state: Option<LinkState>) {
         self.shared.lock(|s| {
             let s = &mut *s.borrow_mut();
             s.link_state = state;
@@ -147,7 +147,7 @@ impl<'d> StateRunner<'d> {
         });
     }
 
-    pub fn link_state_poll_fn(&mut self, cx: &mut Context) -> LinkState {
+    pub fn link_state_poll_fn(&mut self, cx: &mut Context) -> Option<LinkState> {
         self.shared.lock(|s| {
             let s = &mut *s.borrow_mut();
             s.waker.register(cx.waker());
@@ -171,7 +171,7 @@ impl<'d> StateRunner<'d> {
         })
     }
 
-    pub fn link_state(&mut self) -> LinkState {
+    pub fn link_state(&mut self) -> Option<LinkState> {
         self.shared.lock(|s| {
             let s = &mut *s.borrow_mut();
             s.link_state
@@ -272,7 +272,7 @@ pub struct Device<'d, AT: AtatClient, const URC_CAPACITY: usize> {
 }
 
 impl<'d, AT: AtatClient, const URC_CAPACITY: usize> Device<'d, AT, URC_CAPACITY> {
-    pub fn link_state_poll_fn(&mut self, cx: &mut Context) -> LinkState {
+    pub fn link_state_poll_fn(&mut self, cx: &mut Context) -> Option<LinkState> {
         self.shared.lock(|s| {
             let s = &mut *s.borrow_mut();
             s.waker.register(cx.waker());
@@ -288,7 +288,7 @@ impl<'d, AT: AtatClient, const URC_CAPACITY: usize> Device<'d, AT, URC_CAPACITY>
         })
     }
 
-    pub fn link_state(&mut self) -> LinkState {
+    pub fn link_state(&mut self) -> Option<LinkState> {
         self.shared.lock(|s| {
             let s = &mut *s.borrow_mut();
             s.link_state
@@ -336,6 +336,12 @@ impl<'d, AT: AtatClient, const URC_CAPACITY: usize> Device<'d, AT, URC_CAPACITY>
             if ps_now == ps {
                 return Ok(ps_now);
             }
+        }
+    }
+
+    pub async fn dummy_run(&mut self) -> ! {
+        loop {
+            self.urc_subscription.next_message_pure().await;
         }
     }
 }

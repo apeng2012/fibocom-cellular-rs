@@ -15,6 +15,8 @@ pub struct ManufacturerId {
 #[derive(Clone, Debug, AtatResp)]
 pub struct ModelId {
     #[at_arg(position = 0)]
+    pub name: Bytes<32>,
+    #[at_arg(position = 1)]
     pub model: Bytes<16>,
 }
 
@@ -23,7 +25,7 @@ pub struct ModelId {
 #[derive(Clone, Debug, AtatResp)]
 pub struct FirmwareVersion {
     #[at_arg(position = 0)]
-    pub version: Bytes<10>,
+    pub version: Bytes<32>,
 }
 
 /// 4.7 IMEI identification +CGSN
@@ -62,5 +64,5 @@ pub struct CIMI {
 #[derive(Clone, Debug, AtatResp)]
 pub struct CCID {
     #[at_arg(position = 0)]
-    pub ccid: u128,
+    pub ccid: Bytes<32>,
 }

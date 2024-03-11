@@ -40,7 +40,7 @@ use types::{NetworkRegistrationStat, NetworkRegistrationUrcConfig, OperatorSelec
 /// to as RSSI. In LTE the RSSI depends on the currently allocated bandwidth, which is not pre-determined.
 /// Therefore the RSSI is not useful to describe the signal level in the cell.
 #[derive(Clone, AtatCmd)]
-#[at_cmd("+CESQ", SignalQuality)]
+#[at_cmd("+CSQ?", SignalQuality)]
 pub struct GetSignalQuality;
 
 /// 7.5 Operator selection +COPS

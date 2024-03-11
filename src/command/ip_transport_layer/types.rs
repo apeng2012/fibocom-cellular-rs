@@ -20,16 +20,6 @@ pub enum SslTlsStatus {
     Enabled(SecurityProfileId),
 }
 
-/// Enables/disables the HEX mode for +USOWR, +USOST, +USORD and +USORF AT
-/// commands.
-#[derive(Clone, PartialEq, Eq, AtatEnum)]
-pub enum HexMode {
-    /// 0 (factory-programmed value): HEX mode disabled
-    Disabled = 0,
-    /// 1: HEX mode enabled
-    Enabled = 1,
-}
-
 /// Control request identifier
 #[derive(Clone, PartialEq, Eq, AtatEnum)]
 pub enum SocketControlParam {

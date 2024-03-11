@@ -25,16 +25,16 @@ pub mod responses;
 pub mod types;
 pub mod urc;
 use atat::atat_derive::AtatCmd;
+use heapless::String;
 use responses::{
     EPSNetworkRegistrationStatus, ExtendedPSNetworkRegistrationStatus, GPRSAttached,
     GPRSNetworkRegistrationStatus, PDPContextState, PacketSwitchedConfig,
-    PacketSwitchedNetworkData,
 };
 use types::{
     AuthenticationType, ContextId, EPSNetworkRegistrationUrcConfig,
     ExtendedPSNetworkRegistrationUrcConfig, GPRSAttachedState, GPRSNetworkRegistrationUrcConfig,
-    PDPContextStatus, PSEventReportingMode, PacketSwitchedAction, PacketSwitchedNetworkDataParam,
-    PacketSwitchedParam, PacketSwitchedParamReq, ProfileId,
+    PDPContextStatus, PSEventReportingMode, PacketSwitchedAction, PacketSwitchedParamReq,
+    ProfileId,
 };
 
 use super::NoResponse;
@@ -101,12 +101,10 @@ pub struct SetPDPContextDefinition<'a> {
 /// commands for sockets. To set all the parameters of the PSD profile a set
 /// command for each parameter needs to be issued.
 #[derive(Clone, AtatCmd)]
-#[at_cmd("+UPSD", NoResponse)]
+#[at_cmd("+MIPCALL=1,", NoResponse, value_sep = false)]
 pub struct SetPacketSwitchedConfig {
     #[at_arg(position = 0)]
-    pub profile_id: ProfileId,
-    #[at_arg(position = 1)]
-    pub param: PacketSwitchedParam,
+    pub apn: String<99>,
 }
 
 /// 18.7 Get Packet switched data configuration +UPSD
@@ -158,13 +156,8 @@ pub struct SetPacketSwitchedAction {
 /// of the specified parameter for the active PDP context associated with the
 /// specified PSD profile.
 #[derive(Clone, AtatCmd)]
-#[at_cmd("+UPSND", PacketSwitchedNetworkData)]
-pub struct GetPacketSwitchedNetworkData {
-    #[at_arg(position = 0)]
-    pub profile_id: ProfileId,
-    #[at_arg(position = 1)]
-    pub param: PacketSwitchedNetworkDataParam,
-}
+#[at_cmd("+MIPCALL?", NoResponse)]
+pub struct GetStatusIp;
 
 /// 18.14 Set GPRS attach or detach +CGATT
 ///

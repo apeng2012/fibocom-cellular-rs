@@ -50,12 +50,13 @@ atat = { version = "*", features = ["heapless"] }
 
 
 [features]
-default = ["socket-udp", "socket-tcp", "internal-network-stack"]
+default = ["socket-udp", "socket-tcp", "internal-network-stack", "low-mcu"]
+
+low-mcu = []
 
 internal-network-stack = ["dep:ublox-sockets"]
 
 automatic-apn = []
-upsd-context-activation = []
 
 socket-tcp = ["ublox-sockets?/socket-tcp", "embassy-net?/tcp"]
 socket-udp = ["ublox-sockets?/socket-udp", "embassy-net?/udp"]
@@ -79,9 +80,9 @@ lisa-u2 = []
 mpci-l2 = []
 sara-g3 = []
 sara-g4 = []
-sara-r5 = ["upsd-context-activation"]
+sara-r5 = []
 sara-u1 = []
-sara-u2 = ["upsd-context-activation"]
+sara-u2 = []
 toby-l2 = []
 toby-r2 = []
 toby-l4 = []

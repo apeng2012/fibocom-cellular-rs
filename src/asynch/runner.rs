@@ -1,33 +1,28 @@
-use crate::command::psn::GetGPRSAttached;
-use crate::command::psn::GetPDPContextState;
-use crate::command::psn::SetPDPContextState;
-
 use crate::{command::Urc, config::CellularConfig};
 
 use super::state;
-use crate::asynch::state::OperationState;
-use crate::command::control::types::{Circuit108Behaviour, Circuit109Behaviour, FlowControl};
-use crate::command::control::{SetCircuit108Behaviour, SetCircuit109Behaviour, SetFlowControl};
+use crate::asynch::state::{LinkState, OperationState};
+use crate::command;
+use crate::command::control::types::FlowControl;
+use crate::command::control::SetFlowControl;
 use crate::command::device_lock::responses::PinStatus;
 use crate::command::device_lock::types::PinStatusCode;
 use crate::command::device_lock::GetPinStatus;
 use crate::command::general::{GetCCID, GetFirmwareVersion, GetModelId};
-use crate::command::gpio::types::{GpioInPull, GpioMode, GpioOutValue};
-use crate::command::gpio::SetGpioConfiguration;
-use crate::command::mobile_control::types::{Functionality, ResetMode, TerminationErrorMode};
+use crate::command::mobile_control::types::{Functionality, TerminationErrorMode};
 use crate::command::mobile_control::{SetModuleFunctionality, SetReportMobileTerminationError};
-use crate::command::psn::responses::GPRSAttached;
-use crate::command::psn::types::GPRSAttachedState;
-use crate::command::psn::types::PDPContextStatus;
-use crate::command::system_features::types::PowerSavingMode;
-use crate::command::system_features::SetPowerSavingControl;
+use crate::command::psn::responses::GPRSNetworkRegistrationStatus;
+use crate::command::psn::types::GPRSNetworkRegistrationStat;
+use crate::command::psn::GetGPRSNetworkRegistrationStatus;
 use crate::command::AT;
+use crate::config::Apn;
 use crate::error::Error;
 use crate::module_timing::{boot_time, reset_time};
 use atat::{asynch::AtatClient, UrcSubscription};
 use embassy_futures::select::select;
 use embassy_time::{with_timeout, Duration, Timer};
 use embedded_hal::digital::{InputPin, OutputPin};
+use heapless::String;
 
 use crate::command::psn::types::{ContextId, ProfileId};
 use embassy_futures::select::Either;
@@ -101,38 +96,33 @@ impl<'d, AT: AtatClient, C: CellularConfig<'d>, const URC_CAPACITY: usize>
     }
 
     pub async fn power_up(&mut self) -> Result<(), Error> {
-        if !self.has_power().await? {
-            if let Some(pin) = self.config.power_pin() {
-                pin.set_low().map_err(|_| Error::IoPin)?;
-                Timer::after(crate::module_timing::pwr_on_time()).await;
-                pin.set_high().map_err(|_| Error::IoPin)?;
-                Timer::after(boot_time()).await;
-                self.ch.set_power_state(OperationState::PowerUp);
-                debug!("Powered up");
-                Ok(())
-            } else {
-                warn!("No power pin configured");
-                Ok(())
-            }
+        if let Some(pin) = self.config.reset_pin() {
+            pin.set_high().map_err(|_| Error::IoPin)?;
+        }
+        if let Some(pin) = self.config.power_pin() {
+            pin.set_low().map_err(|_| Error::IoPin)?;
+            Timer::after(crate::module_timing::pwr_on_time()).await;
+            pin.set_high().map_err(|_| Error::IoPin)?;
+            Timer::after(boot_time()).await;
+            self.ch.set_power_state(OperationState::PowerUp);
+            warn!("Powered up");
+            Ok(())
         } else {
+            warn!("No power pin configured");
             Ok(())
         }
     }
 
     pub async fn power_down(&mut self) -> Result<(), Error> {
-        if self.has_power().await? {
-            if let Some(pin) = self.config.power_pin() {
-                pin.set_low().map_err(|_| Error::IoPin)?;
-                Timer::after(crate::module_timing::pwr_off_time()).await;
-                pin.set_high().map_err(|_| Error::IoPin)?;
-                self.ch.set_power_state(OperationState::PowerDown);
-                debug!("Powered down");
-                Ok(())
-            } else {
-                warn!("No power pin configured");
-                Ok(())
-            }
+        if let Some(pin) = self.config.power_pin() {
+            pin.set_low().map_err(|_| Error::IoPin)?;
+            Timer::after(crate::module_timing::pwr_off_time()).await;
+            pin.set_high().map_err(|_| Error::IoPin)?;
+            self.ch.set_power_state(OperationState::PowerDown);
+            debug!("Powered down");
+            Ok(())
         } else {
+            warn!("No power pin configured");
             Ok(())
         }
     }
@@ -149,72 +139,21 @@ impl<'d, AT: AtatClient, C: CellularConfig<'d>, const URC_CAPACITY: usize>
             })
             .await?;
 
-        // Select SIM
-        self.at
-            .send(&SetGpioConfiguration {
-                gpio_id: 25,
-                gpio_mode: GpioMode::Output(GpioOutValue::High),
-            })
-            .await?;
-
-        #[cfg(any(feature = "lara-r6"))]
-        self.at
-            .send(&SetGpioConfiguration {
-                gpio_id: 42,
-                gpio_mode: GpioMode::Input(GpioInPull::NoPull),
-            })
-            .await?;
-
         let _model_id = self.at.send(&GetModelId).await?;
-
-        // self.at.send(
-        //     &IdentificationInformation {
-        //         n: 9
-        //     },
-        // ).await?;
 
         self.at.send(&GetFirmwareVersion).await?;
 
         self.select_sim_card().await?;
 
-        let ccid = self.at.send(&GetCCID).await?;
-        info!("CCID: {}", ccid.ccid);
-
-        // DCD circuit (109) changes in accordance with the carrier
-        self.at
-            .send(&SetCircuit109Behaviour {
-                value: Circuit109Behaviour::ChangesWithCarrier,
-            })
-            .await?;
-
-        // Ignore changes to DTR
-        self.at
-            .send(&SetCircuit108Behaviour {
-                value: Circuit108Behaviour::Ignore,
-            })
-            .await?;
-
-        // Switch off UART power saving until it is integrated into this API
-        self.at
-            .send(&SetPowerSavingControl {
-                mode: PowerSavingMode::Disabled,
-                timeout: None,
-            })
-            .await?;
+        let _ccid = self.at.send(&GetCCID).await?;
 
         #[cfg(feature = "internal-network-stack")]
         if C::HEX_MODE {
             self.at
-                .send(&crate::command::ip_transport_layer::SetHexMode {
-                    hex_mode_disable: crate::command::ip_transport_layer::types::HexMode::Enabled,
-                })
+                .send(&crate::command::ip_transport_layer::SetHexMode { hex_mode: 2 })
                 .await?;
         } else {
-            self.at
-                .send(&crate::command::ip_transport_layer::SetHexMode {
-                    hex_mode_disable: crate::command::ip_transport_layer::types::HexMode::Disabled,
-                })
-                .await?;
+            unreachable!();
         }
 
         // Tell module whether we support flow control
@@ -241,12 +180,8 @@ impl<'d, AT: AtatClient, C: CellularConfig<'d>, const URC_CAPACITY: usize>
     /// Returns an error if any of the internal network operations fail.
     ///
     pub async fn init_network(&mut self) -> Result<(), Error> {
-        // Disable Message Waiting URCs (UMWI)
-        #[cfg(any(feature = "toby-r2"))]
         self.at
-            .send(&crate::command::sms::SetMessageWaitingIndication {
-                mode: crate::command::sms::types::MessageWaitingMode::Disabled,
-            })
+            .send(&crate::command::network_service::GetSignalQuality)
             .await?;
 
         self.at
@@ -260,7 +195,6 @@ impl<'d, AT: AtatClient, C: CellularConfig<'d>, const URC_CAPACITY: usize>
         self.at
             .send(&crate::command::mobile_control::SetModuleFunctionality {
                 fun: Functionality::Full,
-                rst: None,
             })
             .await?;
 
@@ -349,18 +283,12 @@ impl<'d, AT: AtatClient, C: CellularConfig<'d>, const URC_CAPACITY: usize>
         // the modem here through minimal/full functional state.
         self.at
             .send(&SetModuleFunctionality {
-                fun: Functionality::Minimum,
-                // SARA-R5 This parameter can be used only when <fun> is 1, 4 or 19
-                #[cfg(feature = "sara-r5")]
-                rst: None,
-                #[cfg(not(feature = "sara-r5"))]
-                rst: Some(ResetMode::DontReset),
+                fun: Functionality::TrunOff,
             })
             .await?;
         self.at
             .send(&SetModuleFunctionality {
                 fun: Functionality::Full,
-                rst: Some(ResetMode::DontReset),
             })
             .await?;
 
@@ -410,21 +338,10 @@ impl<'d, AT: AtatClient, C: CellularConfig<'d>, const URC_CAPACITY: usize>
             sim_reset
         );
 
-        let fun = if sim_reset {
-            Functionality::SilentResetWithSimReset
-        } else {
-            Functionality::SilentReset
-        };
-
         match self
             .at
             .send(&SetModuleFunctionality {
-                fun,
-                // SARA-R5 This parameter can be used only when <fun> is 1, 4 or 19
-                #[cfg(feature = "sara-r5")]
-                rst: None,
-                #[cfg(not(feature = "sara-r5"))]
-                rst: Some(ResetMode::DontReset),
+                fun: Functionality::SilentReset,
             })
             .await
         {
@@ -487,7 +404,7 @@ impl<'d, AT: AtatClient, C: CellularConfig<'d>, const URC_CAPACITY: usize>
                     let _ = self.change_state_to_desired_state(desired_state).await;
                 }
                 Either::Second(event) => {
-                    self.handle_urc(event).await;
+                    self.handle_urc(event).await.ok();
                 }
             }
         }
@@ -563,11 +480,8 @@ impl<'d, AT: AtatClient, C: CellularConfig<'d>, const URC_CAPACITY: usize>
                 }
                 Ok(OperationState::Connected) => match self.init_network().await {
                     Ok(_) => {
-                        match with_timeout(
-                            Duration::from_secs(180),
-                            self.is_network_attached_loop(),
-                        )
-                        .await
+                        match with_timeout(Duration::from_secs(50), self.is_network_attached_loop())
+                            .await
                         {
                             Ok(_) => {
                                 debug!("Will set Connected");
@@ -619,11 +533,28 @@ impl<'d, AT: AtatClient, C: CellularConfig<'d>, const URC_CAPACITY: usize>
             Urc::SocketDataAvailable(_) => warn!("Socket data available"),
             #[cfg(feature = "internal-network-stack")]
             Urc::SocketDataAvailableUDP(_) => warn!("Socket data available UDP"),
-            Urc::DataConnectionActivated(_) => warn!("Data connection activated"),
-            Urc::DataConnectionDeactivated(_) => warn!("Data connection deactivated"),
+
+            Urc::DataConnectionActivated(dca) => {
+                warn!("Data connection activated");
+                if dca.b.len() == 1 {
+                    if dca.b[0] == b'0' {
+                        self.ch.set_link_state(Some(state::LinkState::Down));
+                    } else {
+                        self.ch.set_link_state(None);
+                    }
+                } else if dca.b.len() > 1 {
+                    match (dca.b[1], dca.b[0]) {
+                        (b',', 0) => self.ch.set_link_state(Some(state::LinkState::Down)),
+                        (b',', 1) => self.ch.set_link_state(Some(state::LinkState::Up)),
+                        (b',', 2) => self.ch.set_link_state(None),
+                        (b',', _) => {}
+                        (_, _) => self.ch.set_link_state(Some(state::LinkState::Up)),
+                    }
+                }
+            }
+
             #[cfg(feature = "internal-network-stack")]
             Urc::SocketClosed(_) => warn!("Socket closed"),
-            Urc::MessageWaitingIndication(_) => warn!("Message waiting indication"),
             Urc::ExtendedPSNetworkRegistration(_) => warn!("Extended PS network registration"),
             Urc::HttpResponse(_) => warn!("HTTP response"),
         };
@@ -657,243 +588,83 @@ impl<'d, AT: AtatClient, C: CellularConfig<'d>, const URC_CAPACITY: usize>
         }
 
         // Activate the context
-        #[cfg(feature = "upsd-context-activation")]
-        self.activate_context_upsd(profile_id, apn_info).await?;
-        #[cfg(not(feature = "upsd-context-activation"))]
-        self.activate_context(context_id, profile_id).await?;
+        self.activate_context(apn_info).await?;
 
         Ok(())
     }
 
     // Make sure we are attached to the cellular network.
     async fn is_network_attached(&mut self) -> Result<bool, Error> {
-        // Check for AT+CGATT to return 1
-        let GPRSAttached { state } = self.at.send(&GetGPRSAttached).await.map_err(Error::from)?;
-
-        if state == GPRSAttachedState::Attached {
-            return Ok(true);
-        }
-        return Ok(false);
-
-        // self.at .send( &SetGPRSAttached { state:
-        //     GPRSAttachedState::Attached, } ).await .map_err(Error::from)?;
-    }
-
-    /// Activate context using AT+UPSD commands
-    /// Required for SARA-G3, SARA-U2 SARA-R5 modules.
-    #[cfg(feature = "upsd-context-activation")]
-    async fn activate_context_upsd(
-        &mut self,
-        profile_id: ProfileId,
-        apn_info: Apn<'_>,
-    ) -> Result<(), Error> {
-        // Check if the PSD profile is activated (param_tag = 1)
-        let PacketSwitchedNetworkData { param_tag, .. } = self
+        let GPRSNetworkRegistrationStatus { stat, .. } = self
             .at
-            .send(&GetPacketSwitchedNetworkData {
-                profile_id,
-                param: PacketSwitchedNetworkDataParam::PsdProfileStatus,
-            })
+            .send(&GetGPRSNetworkRegistrationStatus)
             .await
             .map_err(Error::from)?;
 
-        if param_tag == 0 {
-            // SARA-U2 pattern: everything is done through AT+UPSD
-            // Set up the APN
-            if let Apn::Given {
-                name,
-                username,
-                password,
-            } = apn_info
-            {
-                self.at
-                    .send(&SetPacketSwitchedConfig {
-                        profile_id,
-                        param: PacketSwitchedParam::APN(String::<99>::try_from(name).unwrap()),
-                    })
-                    .await
-                    .map_err(Error::from)?;
-
-                // Set up the user name
-                if let Some(user_name) = username {
-                    self.at
-                        .send(&SetPacketSwitchedConfig {
-                            profile_id,
-                            param: PacketSwitchedParam::Username(
-                                String::<64>::try_from(user_name).unwrap(),
-                            ),
-                        })
-                        .await
-                        .map_err(Error::from)?;
-                }
-
-                // Set up the password
-                if let Some(password) = password {
-                    self.at
-                        .send(&SetPacketSwitchedConfig {
-                            profile_id,
-                            param: PacketSwitchedParam::Password(
-                                String::<64>::try_from(password).unwrap(),
-                            ),
-                        })
-                        .await
-                        .map_err(Error::from)?;
-                }
-            }
-            // Set up the dynamic IP address assignment.
-            #[cfg(not(feature = "sara-r5"))]
-            self.at
-                .send(&SetPacketSwitchedConfig {
-                    profile_id,
-                    param: PacketSwitchedParam::IPAddress(Ipv4Addr::unspecified().into()),
-                })
-                .await
-                .map_err(Error::from)?;
-
-            // Automatic authentication protocol selection
-            #[cfg(not(feature = "sara-r5"))]
-            self.at
-                .send(&SetPacketSwitchedConfig {
-                    profile_id,
-                    param: PacketSwitchedParam::Authentication(AuthenticationType::Auto),
-                })
-                .await
-                .map_err(Error::from)?;
-
-            #[cfg(not(feature = "sara-r5"))]
-            self.at
-                .send(&SetPacketSwitchedConfig {
-                    profile_id,
-                    param: PacketSwitchedParam::IPAddress(Ipv4Addr::unspecified().into()),
-                })
-                .await
-                .map_err(Error::from)?;
-
-            #[cfg(feature = "sara-r5")]
-            self.at
-                .send(&SetPacketSwitchedConfig {
-                    profile_id,
-                    param: PacketSwitchedParam::ProtocolType(ProtocolType::IPv4),
-                })
-                .await
-                .map_err(Error::from)?;
-
-            #[cfg(feature = "sara-r5")]
-            self.at
-                .send(&SetPacketSwitchedConfig {
-                    profile_id,
-                    param: PacketSwitchedParam::MapProfile(ContextId(1)),
-                })
-                .await
-                .map_err(Error::from)?;
-
-            self.at
-                .send(&SetPacketSwitchedAction {
-                    profile_id,
-                    action: PacketSwitchedAction::Activate,
-                })
-                .await
-                .map_err(Error::from)?;
+        if stat == GPRSNetworkRegistrationStat::Registered
+            || stat == GPRSNetworkRegistrationStat::RegisteredRoaming
+        {
+            return Ok(true);
         }
-
-        Ok(())
+        return Ok(false);
     }
 
-    /// Activate context using 3GPP commands
-    /// Required for SARA-R4 and TOBY modules.
-    #[cfg(not(feature = "upsd-context-activation"))]
-    async fn activate_context(
-        &mut self,
-        cid: ContextId,
-        _profile_id: ProfileId,
-    ) -> Result<(), Error> {
-        for _ in 0..10 {
-            let context_states = self
-                .at
-                .send(&GetPDPContextState)
-                .await
-                .map_err(Error::from)?;
+    async fn is_connected(&mut self) -> Result<LinkState, Error> {
+        self.ch.set_link_state(None);
 
-            let activated = context_states
-                .iter()
-                .find_map(|state| {
-                    if state.cid == cid {
-                        Some(state.status == PDPContextStatus::Activated)
-                    } else {
-                        None
+        for _ in 0..20 {
+            self.at.send(&command::psn::GetStatusIp).await?;
+
+            if let Ok(event) = with_timeout(
+                Duration::from_millis(200),
+                self.urc_subscription.next_message_pure(),
+            )
+            .await
+            {
+                self.handle_urc(event).await?;
+            }
+
+            if let Some(ls) = self.ch.state_runner().link_state() {
+                return Ok(ls);
+            }
+        }
+
+        Err(Error::_Unknown)
+    }
+
+    async fn activate_context(&mut self, apn_info: Apn<'_>) -> Result<(), Error> {
+        if self.is_connected().await? == LinkState::Down {
+            if let Apn::Given { name, .. } = apn_info {
+                for _ in 0..3 {
+                    while let Some(event) = self.urc_subscription.try_next_message_pure() {
+                        self.handle_urc(event).await?;
                     }
-                })
-                .unwrap_or(false);
 
-            if activated {
-                // Note: SARA-R4 only supports a single context at any one time and
-                // so doesn't require/support AT+UPSD.
-                #[cfg(not(any(feature = "sara-r4", feature = "lara-r6")))]
-                {
-                    if let psn::responses::PacketSwitchedConfig {
-                        param: psn::types::PacketSwitchedParam::MapProfile(context),
-                        ..
-                    } = self
-                        .at
-                        .send(&psn::GetPacketSwitchedConfig {
-                            profile_id: _profile_id,
-                            param: psn::types::PacketSwitchedParamReq::MapProfile,
-                        })
-                        .await
-                        .map_err(Error::from)?
-                    {
-                        if context != cid {
-                            self.at
-                                .send(&psn::SetPacketSwitchedConfig {
-                                    profile_id: _profile_id,
-                                    param: psn::types::PacketSwitchedParam::MapProfile(cid),
-                                })
-                                .await
-                                .map_err(Error::from)?;
-
-                            self.at
-                                .send(
-                                    &psn::GetPacketSwitchedNetworkData {
-                                        profile_id: _profile_id,
-                                        param: psn::types::PacketSwitchedNetworkDataParam::PsdProfileStatus,
-                                    },
-                                ).await
-                                .map_err(Error::from)?;
+                    if let Some(ls) = self.ch.state_runner().link_state() {
+                        if ls == LinkState::Up {
+                            return Ok(());
                         }
                     }
 
-                    let psn::responses::PacketSwitchedNetworkData { param_tag, .. } = self
-                        .at
-                        .send(&psn::GetPacketSwitchedNetworkData {
-                            profile_id: _profile_id,
-                            param: psn::types::PacketSwitchedNetworkDataParam::PsdProfileStatus,
+                    self.at
+                        .send(&crate::command::psn::SetPacketSwitchedConfig {
+                            apn: String::<99>::try_from(name).unwrap(),
                         })
                         .await
                         .map_err(Error::from)?;
 
-                    if param_tag == 0 {
-                        self.at
-                            .send(&psn::SetPacketSwitchedAction {
-                                profile_id: _profile_id,
-                                action: psn::types::PacketSwitchedAction::Activate,
-                            })
-                            .await
-                            .map_err(Error::from)?;
+                    if let Ok(event) = with_timeout(
+                        Duration::from_secs(30),
+                        self.urc_subscription.next_message_pure(),
+                    )
+                    .await
+                    {
+                        self.handle_urc(event).await?;
                     }
                 }
-
-                return Ok(());
-            } else {
-                self.at
-                    .send(&SetPDPContextState {
-                        status: PDPContextStatus::Activated,
-                        cid: Some(cid),
-                    })
-                    .await
-                    .map_err(Error::from)?;
-                Timer::after(Duration::from_secs(1)).await;
             }
+            return Err(Error::_Unknown);
         }
-        return Err(Error::ContextActivationTimeout);
+        Ok(())
     }
 }

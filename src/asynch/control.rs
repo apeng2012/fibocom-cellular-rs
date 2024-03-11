@@ -15,13 +15,7 @@ impl<'a, AT: AtatClient> Control<'a, AT> {
         Self { state_ch, at }
     }
 
-    pub(crate) async fn init(&mut self) -> Result<(), Error> {
-        debug!("Initalizing ublox control");
-
-        Ok(())
-    }
-
-    pub fn link_state(&mut self) -> LinkState {
+    pub fn link_state(&mut self) -> Option<LinkState> {
         self.state_ch.link_state()
     }
 
@@ -61,6 +55,19 @@ impl<'a, AT: AtatClient> Control<'a, AT> {
         &mut self,
         cmd: &Cmd,
     ) -> Result<Cmd::Response, atat::Error> {
-        self.at.send::<Cmd>(cmd).await
+        #[cfg(feature = "low-mcu")]
+        {
+            use embassy_time::Duration;
+            use embassy_time::Timer;
+            Timer::after(Duration::from_millis(100)).await;
+        }
+        let ret = self.at.send::<Cmd>(cmd).await;
+        #[cfg(feature = "low-mcu")]
+        {
+            use embassy_time::Duration;
+            use embassy_time::Timer;
+            Timer::after(Duration::from_millis(100)).await;
+        }
+        ret
     }
 }

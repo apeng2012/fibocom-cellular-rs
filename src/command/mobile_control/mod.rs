@@ -8,7 +8,7 @@ use responses::{
     DateTime, ExtendedErrorReport, IndicatorControl, ModuleFunctionality,
     ReportMobileTerminationError,
 };
-use types::{AutomaticTimezone, Functionality, ResetMode, TerminationErrorMode};
+use types::{AutomaticTimezone, Functionality, TerminationErrorMode};
 
 use super::NoResponse;
 
@@ -34,8 +34,6 @@ pub struct ModuleSwitchOff;
 pub struct SetModuleFunctionality {
     #[at_arg(position = 0)]
     pub fun: Functionality,
-    #[at_arg(position = 1)]
-    pub rst: Option<ResetMode>,
 }
 
 /// 5.3 Set module functionality +CFUN

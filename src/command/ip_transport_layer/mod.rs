@@ -11,7 +11,7 @@ use responses::{
     CreateSocketResponse, SocketControlResponse, SocketData, SocketErrorResponse,
     UDPSendToDataResponse, UDPSocketData, WriteSocketDataResponse,
 };
-use types::{HexMode, SocketControlParam, SocketProtocol, SslTlsStatus};
+use types::{SocketControlParam, SocketProtocol, SslTlsStatus};
 
 use super::NoResponse;
 use ublox_sockets::SocketHandle;
@@ -265,10 +265,18 @@ pub struct ReadUDPSocketData {
 /// Enables/disables the HEX mode for +USOWR, +USOST, +USORD and +USORF AT
 /// commands.
 #[derive(Clone, AtatCmd)]
-#[at_cmd("+UDCONF=1,", NoResponse, value_sep = false)]
+#[at_cmd("+GTSET=\"IPRFMT\",", NoResponse, value_sep = false)]
 pub struct SetHexMode {
+    /// 0: Received data with “+MIPRTCP:” and the data is encoded.
+    /// 1: Received data only and the data are without encoded. In received
+    ///    character string, Module doesn’t accede to any <CR><LF> symbol.
+    /// 2: Received data with “+MIPRTCP:” and the data is without encoded. In
+    ///    received character string, Module will accede to <CR><LF> before
+    ///    “+MIPRTCP:”.
+    /// 5: Data read mode
+    /// The default value is 0.
     #[at_arg(position = 0)]
-    pub hex_mode_disable: HexMode,
+    pub hex_mode: u8,
 }
 
 /// 25.25 Socket control +USOCTL

@@ -16,7 +16,6 @@ pub mod ipc;
 pub mod mobile_control;
 pub mod network_service;
 pub mod psn;
-pub mod sms;
 pub mod system_features;
 
 use atat::atat_derive::{AtatCmd, AtatResp, AtatUrc};
@@ -53,13 +52,9 @@ pub enum Urc {
     #[at_urc("+UUSOCL")]
     SocketClosed(ip_transport_layer::urc::SocketClosed),
 
-    #[at_urc("+UUPSDA")]
+    #[at_urc("+MIPCALL")]
     DataConnectionActivated(psn::urc::DataConnectionActivated),
-    #[at_urc("+UUPSDD")]
-    DataConnectionDeactivated(psn::urc::DataConnectionDeactivated),
 
-    #[at_urc("+UMWI")]
-    MessageWaitingIndication(sms::urc::MessageWaitingIndication),
     // #[at_urc("+CREG")]
     // NetworkRegistration(network_service::urc::NetworkRegistration),
     // #[at_urc("+CGREG")]

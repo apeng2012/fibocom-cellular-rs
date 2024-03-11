@@ -3,19 +3,20 @@
 #![allow(stable_features)]
 // #![feature(type_alias_impl_trait)]
 
+use atat::asynch::Client;
 use defmt::*;
 use embassy_executor::Spawner;
-use embassy_stm32::gpio::{Input, Output};
+use embassy_stm32::gpio::{Input, Level, Output, Speed};
 use embassy_stm32::peripherals::USART3;
 use embassy_stm32::time::Hertz;
 use embassy_stm32::usart::{BufferedUart, BufferedUartRx, BufferedUartTx};
 use embassy_stm32::{bind_interrupts, peripherals, Config};
 use embassy_time::{Duration, Timer};
 use static_cell::StaticCell;
-use ublox_cellular::asynch::state::OperationState;
+use ublox_cellular::asynch::state::{Device, OperationState};
 use ublox_cellular::asynch::InternalRunner;
 use ublox_cellular::asynch::Resources;
-use ublox_cellular::config::{Apn, CellularConfig, ReverseOutputPin};
+use ublox_cellular::config::{Apn, CellularConfig};
 use {defmt_rtt as _, panic_probe as _};
 
 bind_interrupts!(struct Irqs {
@@ -29,7 +30,7 @@ const URC_CAPACITY: usize = 2;
 struct MyCelullarConfig {
     reset_pin: Option<Output<'static>>,
     // reset_pin: Option<NoPin>,
-    power_pin: Option<ReverseOutputPin<Output<'static>>>,
+    power_pin: Option<Output<'static>>,
     // power_pin: Option<NoPin>,
     vint_pin: Option<Input<'static>>,
     // vint_pin: Option<NoPin>
@@ -38,7 +39,7 @@ struct MyCelullarConfig {
 impl<'a> CellularConfig<'a> for MyCelullarConfig {
     type ResetPin = Output<'static>;
     // type ResetPin = NoPin;
-    type PowerPin = ReverseOutputPin<Output<'static>>;
+    type PowerPin = Output<'static>;
     // type PowerPin = NoPin;
     type VintPin = Input<'static>;
     // type VintPin = NoPin;
@@ -46,7 +47,7 @@ impl<'a> CellularConfig<'a> for MyCelullarConfig {
     const FLOW_CONTROL: bool = false;
     const HEX_MODE: bool = true;
     const APN: Apn<'a> = Apn::Given {
-        name: "hologram",
+        name: "CMNET",
         username: None,
         password: None,
     };
@@ -97,16 +98,16 @@ async fn main_task(spawner: Spawner) {
         uart_config.data_bits = embassy_stm32::usart::DataBits::DataBits8;
     }
 
-    static TX_BUF: StaticCell<[u8; 16]> = StaticCell::new();
-    static RX_BUF: StaticCell<[u8; 16]> = StaticCell::new();
+    static TX_BUF: StaticCell<[u8; 64]> = StaticCell::new();
+    static RX_BUF: StaticCell<[u8; 64]> = StaticCell::new();
 
     let cell_uart = BufferedUart::new(
         p.USART3,
         Irqs,
         p.PB11,
         p.PB10,
-        TX_BUF.init([0u8; 16]),
-        RX_BUF.init([0u8; 16]),
+        TX_BUF.init([0u8; 64]),
+        RX_BUF.init([0u8; 64]),
         uart_config,
     )
     .unwrap();
@@ -116,16 +117,18 @@ async fn main_task(spawner: Spawner) {
         Resources<BufferedUartTx<USART3>, CMD_BUF_SIZE, INGRESS_BUF_SIZE, URC_CAPACITY>,
     > = StaticCell::new();
 
-    let (_net_device, mut control, runner) = ublox_cellular::asynch::new_internal(
+    let (net_device, mut control, runner) = ublox_cellular::asynch::new_internal(
         uart_rx,
         uart_tx,
         RESOURCES.init(Resources::new()),
         MyCelullarConfig {
-            reset_pin: None,
-            power_pin: None,
+            reset_pin: Some(Output::new(p.PA4, Level::Low, Speed::Low)),
+            power_pin: Some(Output::new(p.PA5, Level::Low, Speed::Low)),
             vint_pin: None,
         },
     );
+
+    spawner.spawn(net_task(net_device)).unwrap();
 
     defmt::unwrap!(spawner.spawn(cell_task(runner)));
 
@@ -135,8 +138,17 @@ async fn main_task(spawner: Spawner) {
             .set_desired_state(OperationState::DataEstablished)
             .await;
         info!("set_desired_state(PowerState::Alive)");
+        let mut timeout_cnt = 0;
         while control.power_state() != OperationState::DataEstablished {
             Timer::after(Duration::from_millis(1000)).await;
+            timeout_cnt += 1;
+            if timeout_cnt > 60 * 3 {
+                timeout_cnt = 0;
+                control.set_desired_state(OperationState::PowerDown).await;
+                control
+                    .set_desired_state(OperationState::DataEstablished)
+                    .await;
+            }
         }
         Timer::after(Duration::from_millis(10000)).await;
 
@@ -156,7 +168,7 @@ async fn main_task(spawner: Spawner) {
                         continue;
                     }
                 }
-                if sq.rxlev > 0 && sq.rsrp != 255 {
+                if sq.rssi != 99 {
                     break;
                 }
             }
@@ -192,4 +204,15 @@ async fn cell_task(
     >,
 ) -> ! {
     runner.run().await
+}
+
+#[embassy_executor::task]
+async fn net_task(
+    mut runner: Device<
+        'static,
+        Client<'static, BufferedUartTx<'static, USART3>, INGRESS_BUF_SIZE>,
+        URC_CAPACITY,
+    >,
+) -> ! {
+    runner.dummy_run().await
 }
