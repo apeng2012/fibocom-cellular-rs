@@ -242,13 +242,14 @@ pub fn new<'d, AT: AtatClient, const URC_CAPACITY: usize>(
         desired_state_pub_sub: &state.desired_state_pub_sub,
     };
 
-    let shared = runner.shared;
     let desired_state_pub_sub = runner.desired_state_pub_sub;
 
     (
         runner,
         Device {
-            shared,
+            shared: TestShared {
+                inner: &state.shared,
+            },
             urc_subscription,
             at,
             desired_state_pub_sub,
@@ -264,7 +265,7 @@ pub fn new_ppp<'d>(state: &'d mut State) -> Runner<'d> {
 }
 
 pub struct Device<'d, AT: AtatClient, const URC_CAPACITY: usize> {
-    pub(crate) shared: &'d Mutex<NoopRawMutex, RefCell<Shared>>,
+    pub(crate) shared: TestShared<'d>,
     pub(crate) desired_state_pub_sub:
         &'d PubSubChannel<NoopRawMutex, OperationState, 1, MAX_STATE_LISTENERS, 1>,
     pub(crate) at: AtHandle<'d, AT>,
@@ -272,52 +273,8 @@ pub struct Device<'d, AT: AtatClient, const URC_CAPACITY: usize> {
 }
 
 impl<'d, AT: AtatClient, const URC_CAPACITY: usize> Device<'d, AT, URC_CAPACITY> {
-    pub fn link_state_poll_fn(&mut self, cx: &mut Context) -> Option<LinkState> {
-        self.shared.lock(|s| {
-            let s = &mut *s.borrow_mut();
-            s.waker.register(cx.waker());
-            s.link_state
-        })
-    }
-
-    pub fn power_state_poll_fn(&mut self, cx: &mut Context) -> OperationState {
-        self.shared.lock(|s| {
-            let s = &mut *s.borrow_mut();
-            s.waker.register(cx.waker());
-            s.power_state
-        })
-    }
-
-    pub fn link_state(&mut self) -> Option<LinkState> {
-        self.shared.lock(|s| {
-            let s = &mut *s.borrow_mut();
-            s.link_state
-        })
-    }
-
-    pub fn power_state(&mut self) -> OperationState {
-        self.shared.lock(|s| {
-            let s = &mut *s.borrow_mut();
-            s.power_state
-        })
-    }
-
     pub fn desired_state(&mut self) -> OperationState {
-        self.shared.lock(|s| {
-            let s = &mut *s.borrow_mut();
-            s.desired_state
-        })
-    }
-
-    pub fn set_desired_state(&mut self, ps: OperationState) {
-        self.shared.lock(|s| {
-            let s = &mut *s.borrow_mut();
-            s.desired_state = ps;
-            s.waker.wake();
-        });
-        self.desired_state_pub_sub
-            .immediate_publisher()
-            .publish_immediate(ps);
+        self.shared.desired_state()
     }
 
     pub async fn wait_for_desired_state(
@@ -343,5 +300,26 @@ impl<'d, AT: AtatClient, const URC_CAPACITY: usize> Device<'d, AT, URC_CAPACITY>
         loop {
             self.urc_subscription.next_message_pure().await;
         }
+    }
+}
+
+pub struct TestShared<'d> {
+    inner: &'d Mutex<NoopRawMutex, RefCell<Shared>>,
+}
+
+impl<'d> TestShared<'d> {
+    pub fn link_state(&mut self, cx: &mut Context) -> Option<LinkState> {
+        self.inner.lock(|s| {
+            let s = &mut *s.borrow_mut();
+            s.waker.register(cx.waker());
+            s.link_state
+        })
+    }
+
+    pub fn desired_state(&mut self) -> OperationState {
+        self.inner.lock(|s| {
+            let s = &mut *s.borrow_mut();
+            s.desired_state
+        })
     }
 }

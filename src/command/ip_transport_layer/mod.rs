@@ -5,35 +5,17 @@ pub mod responses;
 pub mod types;
 pub mod urc;
 
+use super::NoResponse;
 use atat::atat_derive::AtatCmd;
 use embedded_nal::IpAddr;
+use heapless::String;
 use responses::{
-    CreateSocketResponse, SocketControlResponse, SocketData, SocketErrorResponse,
-    UDPSendToDataResponse, UDPSocketData, WriteSocketDataResponse,
+    SocketControlResponse, SocketData, SocketErrorResponse, UDPSendToDataResponse, UDPSocketData,
+    WriteSocketDataResponse,
 };
 use types::{SocketControlParam, SocketProtocol, SslTlsStatus};
-
-use super::NoResponse;
+use ublox_sockets::PeerHandle;
 use ublox_sockets::SocketHandle;
-
-/// 25.3 Create Socket +USOCR
-///
-/// Creates a socket and associates it with the specified protocol (TCP or UDP), returns a number identifying the
-/// socket. Such command corresponds to the BSD socket routine:
-/// - TOBY-L2 / MPCI-L2 / LARA-R2 / TOBY-R2 / SARA-U2 / LISA-U2 / LISA-U1 / SARA-G4 / SARA-G340 /
-/// SARA-G350 - Up to 7 sockets can be created.
-/// - LEON-G1 - Up to 16 sockets can be created
-///
-/// It is possible to specify the local port to bind within the socket in order to send data from a specific port. The
-/// bind functionality is supported for both TCP and UDP sockets.
-#[derive(Clone, AtatCmd)]
-#[at_cmd("+USOCR", CreateSocketResponse)]
-pub struct CreateSocket {
-    #[at_arg(position = 0)]
-    pub protocol: SocketProtocol,
-    #[at_arg(position = 1)]
-    pub local_port: Option<u16>,
-}
 
 /// 25.4 SSL/TLS mode configuration on TCP socket +USOSEC
 ///
@@ -61,20 +43,12 @@ pub struct SetSocketSslState {
     pub ssl_tls_status: SslTlsStatus,
 }
 
-/// 25.7 Close Socket +USOCL
-///
-/// Closes the specified socket, like the BSD close routine. In case of remote
-/// socket closure the user is notified via the URC. \
-/// By default the command blocks the AT command interface until the the
-/// completion of the socket close operation. By enabling the <`async_close`>
-/// flag, the final result code is sent immediately. The following +UUSOCL URC
-/// will indicate the closure of the specified socket.
+/// Close Socket +MIPCLOSE
 #[derive(Clone, AtatCmd)]
-#[at_cmd("+USOCL", NoResponse, attempts = 1, timeout_ms = 120000)]
+#[at_cmd("+MIPCLOSE", NoResponse, attempts = 3, timeout_ms = 20000)]
 pub struct CloseSocket {
-    // len 1 as ublox devices only support 7 sockets but needs to be changed if this changes!
     #[at_arg(position = 0, len = 1)]
-    pub socket: SocketHandle,
+    pub socket: PeerHandle,
 }
 
 /// 25.8 Get Socket Error +USOER
@@ -85,26 +59,50 @@ pub struct CloseSocket {
 #[at_cmd("+USOER", SocketErrorResponse)]
 pub struct GetSocketError;
 
-/// 25.9 Connect Socket +USOCO
-///
-/// Establishes a peer-to-peer connection of the socket to the specified remote
-/// host on the given remote port, like the BSD connect routine. If the socket
-/// is a TCP socket, the command will actually perform the TCP negotiation
-/// (3-way handshake) to open a connection. If the socket is a UDP socket, this
-/// function will just declare the remote host address and port for later use
-/// with other socket operations (e.g. +USOWR, +USORD). This is important to
-/// note because if <socket> refers to a UDP socket, errors will not be reported
-/// prior to an attempt to write or read data on the socket.
-#[derive(Clone, AtatCmd)]
-#[at_cmd("+USOCO", NoResponse, attempts = 1, timeout_ms = 120000)]
+/// Open a Socket +MIPOPEN
 pub struct ConnectSocket {
-    // len 1 as ublox devices only support 7 sockets but needs to be changed if this changes!
-    #[at_arg(position = 0, len = 1)]
-    pub socket: SocketHandle,
-    #[at_arg(position = 1, len = 39)]
-    pub remote_addr: IpAddr,
-    #[at_arg(position = 2)]
+    pub id: PeerHandle,
+    pub port: Option<u16>,
+    pub remote_addr: String<100>,
     pub remote_port: u16,
+    pub protocol: SocketProtocol,
+}
+
+impl atat::AtatCmd for ConnectSocket {
+    type Response = NoResponse;
+
+    const MAX_LEN: usize = 128;
+    const MAX_TIMEOUT_MS: u32 = 20_000u32;
+
+    fn write(&self, mut buf: &mut [u8]) -> usize {
+        assert!(buf.len() >= Self::MAX_LEN);
+        let buf_len = buf.len();
+        let id = self.id.0;
+        use embedded_io::Write;
+        if let Some(port) = self.port {
+            write!(
+                buf,
+                "AT+MIPOPEN={},{},\"{}\",{},{}\r\n",
+                id, port, self.remote_addr, self.remote_port, self.protocol as u8
+            )
+            .ok();
+        } else {
+            write!(
+                buf,
+                "AT+MIPOPEN={},,\"{}\",{},{}\r\n",
+                id, self.remote_addr, self.remote_port, self.protocol as u8
+            )
+            .ok();
+        }
+        buf_len - buf.len()
+    }
+
+    fn parse(
+        &self,
+        _resp: Result<&[u8], atat::InternalError>,
+    ) -> Result<Self::Response, atat::Error> {
+        Ok(NoResponse)
+    }
 }
 
 /// 25.10 Write socket data +USOWR

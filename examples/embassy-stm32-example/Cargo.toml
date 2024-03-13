@@ -6,7 +6,7 @@ edition = "2021"
 # Example for the STM32f103 with L710 modem attached to UART3
 [dependencies]
 embassy-stm32 = { version = "0.1.0", features = ["defmt", "stm32f103ze", "time-driver-any", "exti", "memory-x", "unstable-pac"]  }
-embassy-executor = { version = "0.5.0", features = ["arch-cortex-m", "executor-thread", "defmt", "integrated-timers"] }
+embassy-executor = { version = "0.5.0", features = ["arch-cortex-m", "executor-thread", "defmt", "integrated-timers", "nightly"] }
 embassy-time = { version = "0.3", features = ["defmt", "defmt-timestamp-uptime"] }
 embassy-sync = { version = "0.5", features = ["defmt"] }
 
@@ -18,10 +18,11 @@ defmt = "0.3.5"
 defmt-rtt = "0.4.0"
 panic-probe = { version = "0.3.1", features = ["print-defmt"] }
 
-static_cell = { version = "2.0", features = []}
+static_cell = { version = "2.0", features = ["nightly"]}
 
 atat = { version = "0.21.0", features = ["derive", "bytes", "defmt"] }
 ublox-cellular-rs = {version = "0.4.0", path = "../..", features = ["lara-r6", "defmt"]}
+no-std-net = "0.6.0"
 
 [patch.crates-io]
 ublox-sockets = { git = "https://github.com/BlackbirdHQ/ublox-sockets", branch = "feature/async-borrowed-sockets" }

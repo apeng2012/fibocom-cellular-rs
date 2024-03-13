@@ -555,6 +555,8 @@ impl<'d, AT: AtatClient, C: CellularConfig<'d>, const URC_CAPACITY: usize>
 
             #[cfg(feature = "internal-network-stack")]
             Urc::SocketClosed(_) => warn!("Socket closed"),
+            #[cfg(feature = "internal-network-stack")]
+            Urc::SocketOpened(_) => warn!("Socket opened"),
             Urc::ExtendedPSNetworkRegistration(_) => warn!("Extended PS network registration"),
             Urc::HttpResponse(_) => warn!("HTTP response"),
         };

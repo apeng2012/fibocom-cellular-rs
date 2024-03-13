@@ -1,5 +1,3 @@
-use crate::command::network_service::types::Error as NetworkError;
-
 #[derive(Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum GenericError {
@@ -12,6 +10,7 @@ pub enum GenericError {
 #[non_exhaustive]
 pub enum Error {
     // General device errors
+    Overflow,
     BaudDetection,
     Busy,
     Uninitialized,
@@ -22,7 +21,7 @@ pub enum Error {
     InvalidStateTransition,
 
     // Network errors
-    Network(NetworkError),
+    Network,
 
     // Service specific errors
     // DataService(DataServiceError),
@@ -43,6 +42,7 @@ pub enum Error {
 impl defmt::Format for Error {
     fn format(&self, f: defmt::Formatter<'_>) {
         match self {
+            Self::Overflow => defmt::write!(f, "Overflow"),
             Self::BaudDetection => defmt::write!(f, "BaudDetection"),
             Self::Busy => defmt::write!(f, "Busy"),
             Self::Uninitialized => defmt::write!(f, "Uninitialized"),
@@ -51,7 +51,7 @@ impl defmt::Format for Error {
             Self::AttachTimeout => defmt::write!(f, "AttachTimeout"),
             Self::ContextActivationTimeout => defmt::write!(f, "ContextActivationTimeout"),
             Self::InvalidStateTransition => defmt::write!(f, "InvalidStateTransition"),
-            Self::Network(e) => defmt::write!(f, "Network({:?})", e),
+            Self::Network => defmt::write!(f, "Network"),
             // Self::DataService(e) => defmt::write!(f, "DataService({:?})", e),
             Self::Generic(e) => defmt::write!(f, "Generic({:?})", e),
             Self::Atat(e) => defmt::write!(f, "Atat({:?})", e),

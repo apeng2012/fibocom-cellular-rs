@@ -1,5 +1,3 @@
-#![cfg(feature = "dontbuild")]
-
 use core::{cell::RefCell, future::poll_fn, task::Poll};
 
 use atat::asynch::AtatClient;
@@ -141,8 +139,9 @@ impl<'a> embedded_nal_async::Dns for DnsSocket<'a> {
 
     async fn get_host_by_address(
         &self,
-        _addr: embedded_nal_async::IpAddr,
-    ) -> Result<heapless::String<256>, Self::Error> {
+        _addr: IpAddr,
+        _result: &mut [u8],
+    ) -> Result<usize, Self::Error> {
         unimplemented!()
     }
 }

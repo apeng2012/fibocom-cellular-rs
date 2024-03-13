@@ -1,5 +1,3 @@
-#![cfg(feature = "dontbuild")]
-
 #[cfg(feature = "socket-tcp")]
 pub mod tcp;
 // #[cfg(feature = "socket-udp")]
@@ -8,21 +6,13 @@ pub mod tcp;
 pub mod dns;
 
 use core::cell::RefCell;
+use core::fmt::Write;
 use core::future::poll_fn;
 use core::ops::{DerefMut, Rem};
 use core::task::Poll;
 
 use crate::asynch::state::Device;
-use crate::command::data_mode::responses::ConnectPeerResponse;
-use crate::command::data_mode::urc::PeerDisconnected;
-use crate::command::data_mode::{ClosePeerConnection, ConnectPeer};
-use crate::command::edm::types::{DataEvent, Protocol, DATA_PACKAGE_SIZE};
-use crate::command::edm::urc::EdmEvent;
-use crate::command::edm::EdmDataCommand;
-use crate::command::ping::urc::{PingErrorResponse, PingResponse};
-use crate::command::ping::Ping;
 use crate::command::Urc;
-use crate::peer_builder::PeerUrlBuilder;
 
 use self::dns::DnsSocket;
 
@@ -30,19 +20,20 @@ use super::state::{self, LinkState};
 use super::AtHandle;
 
 use atat::asynch::AtatClient;
-use atomic_polyfill::{AtomicBool, AtomicU8, Ordering};
 use embassy_futures::select::{select4, Either4};
 use embassy_sync::waitqueue::WakerRegistration;
 use embassy_time::{Duration, Ticker};
 use embedded_nal_async::SocketAddr;
 use futures::pin_mut;
+use heapless::String;
 use no_std_net::IpAddr;
-use ublox_sockets::{
-    AnySocket, ChannelId, PeerHandle, Socket, SocketHandle, SocketSet, SocketStorage,
-};
+use portable_atomic::{AtomicBool, AtomicU8, Ordering};
+use ublox_sockets::{PeerHandle, Socket, SocketHandle, SocketSet, SocketStorage};
 
 #[cfg(feature = "socket-tcp")]
 use ublox_sockets::TcpState;
+#[cfg(feature = "socket-udp")]
+use ublox_sockets::UdpState;
 
 const MAX_HOSTNAME_LEN: usize = 64;
 
@@ -137,6 +128,7 @@ impl<AT: AtatClient + 'static, const URC_CAPACITY: usize> UbloxStack<AT, URC_CAP
 
             let mut device = self.device.borrow_mut();
             let Device {
+                ref mut desired_state_pub_sub,
                 ref mut urc_subscription,
                 ref mut shared,
                 ref mut at,
@@ -146,16 +138,13 @@ impl<AT: AtatClient + 'static, const URC_CAPACITY: usize> UbloxStack<AT, URC_CAP
                 urc_subscription.next_message_pure(),
                 should_tx,
                 ticker.next(),
-                poll_fn(|cx| {
-                    match (
-                        self.link_up.load(Ordering::Relaxed),
-                        device.link_state_poll_fn(cx),
-                    ) {
-                        (true, LinkState::Down) => Poll::Ready(LinkState::Down),
-                        (false, LinkState::Up) => Poll::Ready(LinkState::Up),
+                poll_fn(
+                    |cx| match (self.link_up.load(Ordering::Relaxed), shared.link_state(cx)) {
+                        (true, Some(LinkState::Down)) => Poll::Ready(LinkState::Down),
+                        (false, Some(LinkState::Up)) => Poll::Ready(LinkState::Up),
                         _ => Poll::Pending,
-                    }
-                }),
+                    },
+                ),
             )
             .await
             {
@@ -192,78 +181,17 @@ impl<AT: AtatClient + 'static, const URC_CAPACITY: usize> UbloxStack<AT, URC_CAP
         DnsSocket::new(self).query(name, addr_type).await
     }
 
-    fn socket_rx(event: EdmEvent, socket: &RefCell<SocketStack>) {
+    fn socket_rx(event: Urc, socket: &RefCell<SocketStack>) {
         match event {
-            EdmEvent::IPv4ConnectEvent(ev) => {
-                let endpoint = SocketAddr::new(ev.remote_ip.into(), ev.remote_port);
-                Self::connect_event(ev.channel_id, ev.protocol, endpoint, socket);
-            }
-            EdmEvent::IPv6ConnectEvent(ev) => {
-                let endpoint = SocketAddr::new(ev.remote_ip.into(), ev.remote_port);
-                Self::connect_event(ev.channel_id, ev.protocol, endpoint, socket);
-            }
-            EdmEvent::DisconnectEvent(channel_id) => {
-                let mut s = socket.borrow_mut();
-                for (_handle, socket) in s.sockets.iter_mut() {
-                    match socket {
-                        #[cfg(feature = "socket-udp")]
-                        Socket::Udp(udp) if udp.edm_channel == Some(channel_id) => {
-                            udp.edm_channel = None;
-                            break;
-                        }
-                        #[cfg(feature = "socket-tcp")]
-                        Socket::Tcp(tcp) if tcp.edm_channel == Some(channel_id) => {
-                            tcp.edm_channel = None;
-                            break;
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            EdmEvent::DataEvent(DataEvent { channel_id, data }) => {
-                let mut s = socket.borrow_mut();
-                for (_handle, socket) in s.sockets.iter_mut() {
-                    match socket {
-                        #[cfg(feature = "socket-udp")]
-                        Socket::Udp(udp)
-                            if udp.edm_channel == Some(channel_id) && udp.may_recv() =>
-                        {
-                            let n = udp.rx_enqueue_slice(&data);
-                            if n < data.len() {
-                                error!(
-                                    "[{}] UDP RX data overflow! Discarding {} bytes",
-                                    udp.peer_handle,
-                                    data.len() - n
-                                );
-                            }
-                            break;
-                        }
-                        #[cfg(feature = "socket-tcp")]
-                        Socket::Tcp(tcp)
-                            if tcp.edm_channel == Some(channel_id) && tcp.may_recv() =>
-                        {
-                            let n = tcp.rx_enqueue_slice(&data);
-                            if n < data.len() {
-                                error!(
-                                    "[{}] TCP RX data overflow! Discarding {} bytes",
-                                    tcp.peer_handle,
-                                    data.len() - n
-                                );
-                            }
-                            break;
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            EdmEvent::ATEvent(Urc::PeerDisconnected(PeerDisconnected { handle })) => {
+            Urc::SocketClosed(sc) => {
+                let handle = sc.id;
                 let mut s = socket.borrow_mut();
                 for (_handle, socket) in s.sockets.iter_mut() {
                     match socket {
                         #[cfg(feature = "socket-udp")]
                         Socket::Udp(udp) if udp.peer_handle == Some(handle) => {
                             udp.peer_handle = None;
-                            udp.set_state(UdpState::TimeWait);
+                            udp.set_state(UdpState::Closed);
                             break;
                         }
                         #[cfg(feature = "socket-tcp")]
@@ -276,38 +204,10 @@ impl<AT: AtatClient + 'static, const URC_CAPACITY: usize> UbloxStack<AT, URC_CAP
                     }
                 }
             }
-            EdmEvent::ATEvent(Urc::PingResponse(PingResponse {
-                ip, hostname, rtt, ..
-            })) => {
-                let mut s = socket.borrow_mut();
-                if let Some(query) = s.dns_queries.get_mut(&hostname) {
-                    match query.state {
-                        DnsState::Pending if rtt == -1 => {
-                            // According to AT manual, rtt = -1 means the PING has timed out
-                            query.state = DnsState::Err;
-                            query.waker.wake();
-                        }
-                        DnsState::Pending => {
-                            query.state = DnsState::Ok(ip);
-                            query.waker.wake();
-                        }
-                        _ => {}
-                    }
-                }
+            Urc::SocketOpened(so) => {
+                Self::connect_event(SocketHandle(so.id.0 - 1), socket);
             }
-            EdmEvent::ATEvent(Urc::PingErrorResponse(PingErrorResponse { error: _ })) => {
-                let mut s = socket.borrow_mut();
-                for (_, query) in s.dns_queries.iter_mut() {
-                    match query.state {
-                        DnsState::Pending => {
-                            query.state = DnsState::Err;
-                            query.waker.wake();
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            _ => {}
+            _ => (),
         }
     }
 
@@ -342,7 +242,7 @@ impl<AT: AtatClient + 'static, const URC_CAPACITY: usize> UbloxStack<AT, URC_CAP
         for (handle, socket) in s.sockets.iter_mut().skip(skip as usize) {
             match socket {
                 #[cfg(feature = "socket-udp")]
-                Socket::Udp(udp) => todo!(),
+                Socket::Udp(_udp) => todo!(),
                 #[cfg(feature = "socket-tcp")]
                 Socket::Tcp(tcp) => {
                     tcp.poll();
@@ -350,38 +250,15 @@ impl<AT: AtatClient + 'static, const URC_CAPACITY: usize> UbloxStack<AT, URC_CAP
                     match tcp.state() {
                         TcpState::Closed => {
                             if let Some(addr) = tcp.remote_endpoint() {
-                                let url = PeerUrlBuilder::new()
-                                    .address(&addr)
-                                    .set_local_port(tcp.local_port)
-                                    .tcp::<128>()
-                                    .unwrap();
-
                                 return Some(TxEvent::Connect {
                                     socket_handle: handle,
-                                    url,
+                                    socket_addr: addr,
                                 });
                             }
                         }
                         // We transmit data in all states where we may have data in the buffer,
                         // or the transmit half of the connection is still open.
-                        TcpState::Established | TcpState::CloseWait | TcpState::LastAck => {
-                            if let Some(edm_channel) = tcp.edm_channel {
-                                warn!("{}", tcp);
-                                return tcp.tx_dequeue(|payload| {
-                                    let len = core::cmp::min(payload.len(), DATA_PACKAGE_SIZE);
-                                    let res = if len != 0 {
-                                        Some(TxEvent::Send {
-                                            edm_channel,
-                                            data: heapless::Vec::from_slice(payload).unwrap(),
-                                        })
-                                    } else {
-                                        None
-                                    };
-
-                                    (len, res)
-                                });
-                            }
-                        }
+                        TcpState::Established | TcpState::CloseWait | TcpState::LastAck => {}
                         TcpState::FinWait1 => {
                             return Some(TxEvent::Close {
                                 peer_handle: tcp.peer_handle.unwrap(),
@@ -401,9 +278,22 @@ impl<AT: AtatClient + 'static, const URC_CAPACITY: usize> UbloxStack<AT, URC_CAP
 
     async fn socket_tx(ev: TxEvent, socket: &RefCell<SocketStack>, at: &mut AtHandle<'_, AT>) {
         match ev {
-            TxEvent::Connect { socket_handle, url } => {
-                match at.send(ConnectPeer { url: &url }).await {
-                    Ok(ConnectPeerResponse { peer_handle }) => {
+            TxEvent::Connect {
+                socket_handle,
+                socket_addr,
+            } => {
+                let peer_handle = PeerHandle(socket_handle.0 + 1);
+                let mut s = String::new();
+                write!(&mut s, "{}", socket_addr.ip()).ok();
+                let cmd = crate::command::ip_transport_layer::ConnectSocket {
+                    id: peer_handle,
+                    port: None,
+                    remote_addr: s,
+                    remote_port: socket_addr.port(),
+                    protocol: crate::command::ip_transport_layer::types::SocketProtocol::TCP,
+                };
+                match at.send(&cmd).await {
+                    Ok(_) => {
                         let mut s = socket.borrow_mut();
                         let tcp = s
                             .sockets
@@ -416,72 +306,35 @@ impl<AT: AtatClient + 'static, const URC_CAPACITY: usize> UbloxStack<AT, URC_CAP
                     }
                 }
             }
-            TxEvent::Send { edm_channel, data } => {
-                warn!("Sending {} bytes on {}", data.len(), edm_channel);
-                at.send(EdmDataCommand {
-                    channel: edm_channel,
-                    data: &data,
+            TxEvent::Send {} => {}
+            TxEvent::Close { peer_handle } => {
+                at.send(&crate::command::ip_transport_layer::CloseSocket {
+                    socket: peer_handle,
                 })
                 .await
                 .ok();
             }
-            TxEvent::Close { peer_handle } => {
-                at.send(ClosePeerConnection { peer_handle }).await.ok();
-            }
-            TxEvent::Dns { hostname } => {
-                match at
-                    .send(Ping {
-                        hostname: &hostname,
-                        retry_num: 1,
-                    })
-                    .await
-                {
-                    Ok(_) => {}
-                    Err(_) => {
-                        let mut s = socket.borrow_mut();
-                        if let Some(query) = s.dns_queries.get_mut(&hostname) {
-                            match query.state {
-                                DnsState::Pending => {
-                                    query.state = DnsState::Err;
-                                    query.waker.wake();
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                }
-            }
+            TxEvent::Dns { hostname } => {}
         }
     }
 
-    fn connect_event(
-        channel_id: ChannelId,
-        protocol: Protocol,
-        endpoint: SocketAddr,
-        socket: &RefCell<SocketStack>,
-    ) {
+    fn connect_event(handle: SocketHandle, socket: &RefCell<SocketStack>) {
         let mut s = socket.borrow_mut();
-        for (_handle, socket) in s.sockets.iter_mut() {
-            match protocol {
-                #[cfg(feature = "socket-tcp")]
-                Protocol::TCP => match ublox_sockets::tcp::Socket::downcast_mut(socket) {
-                    Some(tcp) if tcp.remote_endpoint == Some(endpoint) => {
-                        tcp.edm_channel = Some(channel_id);
+        for (h, socket) in s.sockets.iter_mut() {
+            if handle == h {
+                match socket {
+                    #[cfg(feature = "socket-tcp")]
+                    Socket::Tcp(tcp) => {
                         tcp.set_state(TcpState::Established);
                         break;
                     }
-                    _ => {}
-                },
-                #[cfg(feature = "socket-udp")]
-                Protocol::UDP => match ublox_sockets::udp::Socket::downcast_mut(socket) {
-                    Some(udp) if udp.remote_endpoint == Some(endpoint) => {
-                        udp.edm_channel = Some(channel_id);
-                        udp.set_state(ublox_sockets::UdpState::Established);
+                    #[cfg(feature = "socket-udp")]
+                    Socket::Udp(udp) => {
+                        udp.set_state(UdpState::Established);
                         break;
                     }
                     _ => {}
-                },
-                _ => {}
+                }
             }
         }
     }
@@ -492,12 +345,9 @@ impl<AT: AtatClient + 'static, const URC_CAPACITY: usize> UbloxStack<AT, URC_CAP
 enum TxEvent {
     Connect {
         socket_handle: SocketHandle,
-        url: heapless::String<128>,
+        socket_addr: SocketAddr,
     },
-    Send {
-        edm_channel: ChannelId,
-        data: heapless::Vec<u8, DATA_PACKAGE_SIZE>,
-    },
+    Send {},
     Close {
         peer_handle: PeerHandle,
     },

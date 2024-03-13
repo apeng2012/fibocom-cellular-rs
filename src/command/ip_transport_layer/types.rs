@@ -2,10 +2,17 @@
 use crate::command::device_data_security::types::SecurityProfileId;
 use atat::atat_derive::AtatEnum;
 
-#[derive(Clone, PartialEq, Eq, AtatEnum)]
+#[derive(Clone, Copy, PartialEq, Eq, AtatEnum)]
 pub enum SocketProtocol {
-    TCP = 6,
-    UDP = 17,
+    TCP = 0,
+    UDP = 1,
+    SSL = 2,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, AtatEnum)]
+pub enum OpenState {
+    Inactive = 0,
+    Active = 1,
 }
 
 #[derive(Clone, PartialEq, Eq, AtatEnum)]

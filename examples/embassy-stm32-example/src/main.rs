@@ -1,7 +1,7 @@
 #![no_std]
 #![no_main]
 #![allow(stable_features)]
-// #![feature(type_alias_impl_trait)]
+#![feature(type_alias_impl_trait)]
 
 use atat::asynch::Client;
 use defmt::*;
@@ -12,8 +12,11 @@ use embassy_stm32::time::Hertz;
 use embassy_stm32::usart::{BufferedUart, BufferedUartRx, BufferedUartTx};
 use embassy_stm32::{bind_interrupts, peripherals, Config};
 use embassy_time::{Duration, Timer};
-use static_cell::StaticCell;
-use ublox_cellular::asynch::state::{Device, OperationState};
+use no_std_net::Ipv4Addr;
+use static_cell::make_static;
+use ublox_cellular::asynch::state::OperationState;
+use ublox_cellular::asynch::ublox_stack::tcp::TcpSocket;
+use ublox_cellular::asynch::ublox_stack::{StackResources, UbloxStack};
 use ublox_cellular::asynch::InternalRunner;
 use ublox_cellular::asynch::Resources;
 use ublox_cellular::config::{Apn, CellularConfig};
@@ -79,16 +82,46 @@ async fn main_task(spawner: Spawner) {
         config.rcc.pll = Some(Pll {
             src: PllSource::HSE,
             prediv: PllPreDiv::DIV1,
-            mul: PllMul::MUL9,
+            mul: PllMul::MUL14,
         });
         // System clock comes from PLL (= the 72 MHz main PLL output)
         config.rcc.sys = Sysclk::PLL1_P;
         // 72 MHz / 2 = 36 MHz APB1 frequency
-        config.rcc.apb1_pre = APBPrescaler::DIV2;
+        config.rcc.apb1_pre = APBPrescaler::DIV4;
         // 72 MHz / 1 = 72 MHz APB2 frequency
-        config.rcc.apb2_pre = APBPrescaler::DIV1;
+        config.rcc.apb2_pre = APBPrescaler::DIV2;
     }
     let p = embassy_stm32::init(config);
+
+    //let mut led = Output::new(p.PB1, Level::High, Speed::Low);
+
+    // region: --- power enable
+    // en D3V8: L710
+    let mut en_d3v8 = Output::new(p.PB8, Level::High, Speed::Low);
+    en_d3v8.set_high();
+
+    // 关闭 VBAT -> D3V8
+    let mut en_vbat2d3v8 = Output::new(p.PB13, Level::Low, Speed::Low);
+    en_vbat2d3v8.set_low();
+
+    // 继电器切断 VBAT -> D3V8
+    let mut dis_vbat2d3v8 = Output::new(p.PC8, Level::High, Speed::Low);
+    dis_vbat2d3v8.set_high();
+
+    // en 3V3: 串口 运放 EEPROM
+    let mut en_3v3 = Output::new(p.PA1, Level::High, Speed::Low);
+    en_3v3.set_high();
+    // endregion: --- power enable
+
+    // region: --- l710 hardware init
+    // let mut l710_poweron = Output::new(p.PA5, Level::High, Speed::Low);
+    // l710_poweron.set_high();
+    let mut l710_wakeup = Output::new(p.PC0, Level::High, Speed::Low); // 电路中取反
+    l710_wakeup.set_high();
+    // let mut l710_reset = Output::new(p.PA4, Level::Low, Speed::Low);
+    // l710_reset.set_low();
+    // Timer::after_millis(200).await;
+    // l710_reset.set_high();
 
     let mut uart_config = embassy_stm32::usart::Config::default();
     {
@@ -98,29 +131,24 @@ async fn main_task(spawner: Spawner) {
         uart_config.data_bits = embassy_stm32::usart::DataBits::DataBits8;
     }
 
-    static TX_BUF: StaticCell<[u8; 64]> = StaticCell::new();
-    static RX_BUF: StaticCell<[u8; 64]> = StaticCell::new();
+    let tx_buf = &mut make_static!([0u8; 64])[..];
+    let rx_buf = &mut make_static!([0u8; 64])[..];
 
-    let cell_uart = BufferedUart::new(
-        p.USART3,
-        Irqs,
-        p.PB11,
-        p.PB10,
-        TX_BUF.init([0u8; 64]),
-        RX_BUF.init([0u8; 64]),
-        uart_config,
-    )
-    .unwrap();
+    let cell_uart =
+        BufferedUart::new(p.USART3, Irqs, p.PB11, p.PB10, tx_buf, rx_buf, uart_config).unwrap();
     let (uart_tx, uart_rx) = cell_uart.split();
 
-    static RESOURCES: StaticCell<
-        Resources<BufferedUartTx<USART3>, CMD_BUF_SIZE, INGRESS_BUF_SIZE, URC_CAPACITY>,
-    > = StaticCell::new();
+    let resources = make_static!(Resources::<
+        BufferedUartTx<USART3>,
+        CMD_BUF_SIZE,
+        INGRESS_BUF_SIZE,
+        URC_CAPACITY,
+    >::new());
 
     let (net_device, mut control, runner) = ublox_cellular::asynch::new_internal(
         uart_rx,
         uart_tx,
-        RESOURCES.init(Resources::new()),
+        resources,
         MyCelullarConfig {
             reset_pin: Some(Output::new(p.PA4, Level::Low, Speed::Low)),
             power_pin: Some(Output::new(p.PA5, Level::Low, Speed::Low)),
@@ -128,8 +156,13 @@ async fn main_task(spawner: Spawner) {
         },
     );
 
-    spawner.spawn(net_task(net_device)).unwrap();
+    // Init network stack
+    let stack = &*make_static!(UbloxStack::new(
+        net_device,
+        make_static!(StackResources::<4>::new()),
+    ));
 
+    defmt::unwrap!(spawner.spawn(net_task(stack)));
     defmt::unwrap!(spawner.spawn(cell_task(runner)));
 
     Timer::after(Duration::from_millis(1000)).await;
@@ -173,14 +206,8 @@ async fn main_task(spawner: Spawner) {
                 }
             }
         }
-        let dns = control
-            .send(&ublox_cellular::command::dns::ResolveNameIp {
-                resolution_type:
-                    ublox_cellular::command::dns::types::ResolutionType::DomainNameToIp,
-                ip_domain_string: "www.google.com",
-            })
-            .await;
-        debug!("dns: {:?}", dns);
+        test_visit_ifconfig(stack).await;
+
         Timer::after(Duration::from_millis(10000)).await;
         control.set_desired_state(OperationState::PowerDown).await;
         info!("set_desired_state(PowerState::PowerDown)");
@@ -190,6 +217,54 @@ async fn main_task(spawner: Spawner) {
 
         Timer::after(Duration::from_millis(5000)).await;
     }
+}
+
+const RX_SIZE: usize = INGRESS_BUF_SIZE;
+
+const RX_BUFFER_SIZE: usize = 1024;
+const TX_BUFFER_SIZE: usize = 1024;
+const SERVER_ADDRESS: Ipv4Addr = Ipv4Addr::new(172, 67, 199, 190);
+const HTTP_PORT: u16 = 80;
+
+async fn test_visit_ifconfig(
+    stack: &'static UbloxStack<
+        Client<'static, BufferedUartTx<'static, USART3>, INGRESS_BUF_SIZE>,
+        URC_CAPACITY,
+    >,
+) {
+    info!("Testing visit ifconfig.net...");
+
+    let mut rx_buffer = [0; RX_BUFFER_SIZE];
+    let mut tx_buffer = [0; TX_BUFFER_SIZE];
+    let mut socket = TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
+    // socket.set_timeout(Some(Duration::from_secs(10)));
+
+    // info!(
+    //     "connecting to {:?}:{}...",
+    //     debug2Format(&SERVER_ADDRESS),
+    //     HTTP_PORT
+    // );
+    if let Err(e) = socket.connect((SERVER_ADDRESS, HTTP_PORT)).await {
+        error!("connect error: {:?}", e);
+        return;
+    }
+
+    // info!("Sending HTTP request...");
+    // let request = b"GET / HTTP/1.1\r\nAccept: text/plain\r\nHost: ifconfig.net\r\n\r\n";
+    // let bytes_write = socket
+    //     .write(request)
+    //     .await
+    //     .expect("Could not send HTTP request");
+    // info!("Write {} bytes", bytes_write);
+
+    // let mut rx_buf = [0; RX_SIZE];
+    // let bytes_read = socket
+    //     .read(&mut rx_buf)
+    //     .await
+    //     .expect("Error while receiving data");
+    // info!("Read {} bytes", bytes_read);
+
+    Timer::after(Duration::from_millis(10000)).await;
 }
 
 #[embassy_executor::task]
@@ -208,11 +283,10 @@ async fn cell_task(
 
 #[embassy_executor::task]
 async fn net_task(
-    mut runner: Device<
-        'static,
+    stack: &'static UbloxStack<
         Client<'static, BufferedUartTx<'static, USART3>, INGRESS_BUF_SIZE>,
         URC_CAPACITY,
     >,
 ) -> ! {
-    runner.dummy_run().await
+    stack.run().await
 }

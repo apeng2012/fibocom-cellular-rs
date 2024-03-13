@@ -49,8 +49,11 @@ pub enum Urc {
     #[at_urc("+UUSORF")]
     SocketDataAvailableUDP(ip_transport_layer::urc::SocketDataAvailable),
     #[cfg(feature = "internal-network-stack")]
-    #[at_urc("+UUSOCL")]
+    #[at_urc("+MIPCLOSE")]
     SocketClosed(ip_transport_layer::urc::SocketClosed),
+    #[cfg(feature = "internal-network-stack")]
+    #[at_urc("+MIPOPEN")]
+    SocketOpened(ip_transport_layer::urc::SocketOpened),
 
     #[at_urc("+MIPCALL")]
     DataConnectionActivated(psn::urc::DataConnectionActivated),

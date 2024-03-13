@@ -44,13 +44,19 @@ embassy-net = { version = "0.4", features = [
 
 embedded-io = "0.6"
 embedded-io-async = "0.6"
+portable-atomic = "1.6.0"
+futures = { version = "0.3.17", default-features = false, features = [
+    "async-await",
+    "cfg-target-has-atomic",
+    "unstable",
+] }
 
 [dev-dependencies]
 atat = { version = "*", features = ["heapless"] }
 
 
 [features]
-default = ["socket-udp", "socket-tcp", "internal-network-stack", "low-mcu"]
+default = ["socket-udp", "socket-tcp", "internal-network-stack"]
 
 low-mcu = []
 
