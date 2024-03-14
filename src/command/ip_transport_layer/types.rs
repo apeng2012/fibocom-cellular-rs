@@ -15,6 +15,13 @@ pub enum OpenState {
     Active = 1,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, AtatEnum)]
+pub enum SendStatus {
+    Success = 0,
+    FlowedOff = 1,
+    NoDataToSend = 2,
+}
+
 #[derive(Clone, PartialEq, Eq, AtatEnum)]
 #[at_enum(u8)]
 pub enum SslTlsStatus {

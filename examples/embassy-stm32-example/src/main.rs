@@ -82,46 +82,16 @@ async fn main_task(spawner: Spawner) {
         config.rcc.pll = Some(Pll {
             src: PllSource::HSE,
             prediv: PllPreDiv::DIV1,
-            mul: PllMul::MUL14,
+            mul: PllMul::MUL9,
         });
         // System clock comes from PLL (= the 72 MHz main PLL output)
         config.rcc.sys = Sysclk::PLL1_P;
         // 72 MHz / 2 = 36 MHz APB1 frequency
-        config.rcc.apb1_pre = APBPrescaler::DIV4;
+        config.rcc.apb1_pre = APBPrescaler::DIV2;
         // 72 MHz / 1 = 72 MHz APB2 frequency
-        config.rcc.apb2_pre = APBPrescaler::DIV2;
+        config.rcc.apb2_pre = APBPrescaler::DIV1;
     }
     let p = embassy_stm32::init(config);
-
-    //let mut led = Output::new(p.PB1, Level::High, Speed::Low);
-
-    // region: --- power enable
-    // en D3V8: L710
-    let mut en_d3v8 = Output::new(p.PB8, Level::High, Speed::Low);
-    en_d3v8.set_high();
-
-    // 关闭 VBAT -> D3V8
-    let mut en_vbat2d3v8 = Output::new(p.PB13, Level::Low, Speed::Low);
-    en_vbat2d3v8.set_low();
-
-    // 继电器切断 VBAT -> D3V8
-    let mut dis_vbat2d3v8 = Output::new(p.PC8, Level::High, Speed::Low);
-    dis_vbat2d3v8.set_high();
-
-    // en 3V3: 串口 运放 EEPROM
-    let mut en_3v3 = Output::new(p.PA1, Level::High, Speed::Low);
-    en_3v3.set_high();
-    // endregion: --- power enable
-
-    // region: --- l710 hardware init
-    // let mut l710_poweron = Output::new(p.PA5, Level::High, Speed::Low);
-    // l710_poweron.set_high();
-    let mut l710_wakeup = Output::new(p.PC0, Level::High, Speed::Low); // 电路中取反
-    l710_wakeup.set_high();
-    // let mut l710_reset = Output::new(p.PA4, Level::Low, Speed::Low);
-    // l710_reset.set_low();
-    // Timer::after_millis(200).await;
-    // l710_reset.set_high();
 
     let mut uart_config = embassy_stm32::usart::Config::default();
     {
@@ -249,20 +219,20 @@ async fn test_visit_ifconfig(
         return;
     }
 
-    // info!("Sending HTTP request...");
-    // let request = b"GET / HTTP/1.1\r\nAccept: text/plain\r\nHost: ifconfig.net\r\n\r\n";
-    // let bytes_write = socket
-    //     .write(request)
-    //     .await
-    //     .expect("Could not send HTTP request");
-    // info!("Write {} bytes", bytes_write);
+    info!("Sending HTTP request...");
+    let request = b"GET / HTTP/1.1\r\nAccept: text/plain\r\nHost: ifconfig.net\r\n\r\n\x1A";
+    let bytes_write = socket
+        .write(request)
+        .await
+        .expect("Could not send HTTP request");
+    info!("Write {} bytes", bytes_write);
 
-    // let mut rx_buf = [0; RX_SIZE];
-    // let bytes_read = socket
-    //     .read(&mut rx_buf)
-    //     .await
-    //     .expect("Error while receiving data");
-    // info!("Read {} bytes", bytes_read);
+    let mut rx_buf = [0; RX_SIZE];
+    let bytes_read = socket
+        .read(&mut rx_buf)
+        .await
+        .expect("Error while receiving data");
+    info!("Read {} bytes", bytes_read);
 
     Timer::after(Duration::from_millis(10000)).await;
 }

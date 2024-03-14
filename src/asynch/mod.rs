@@ -2,6 +2,7 @@ pub mod control;
 mod resources;
 pub mod runner;
 pub mod state;
+pub mod ublox_stack;
 
 #[cfg(feature = "internal-network-stack")]
 mod internal_stack;

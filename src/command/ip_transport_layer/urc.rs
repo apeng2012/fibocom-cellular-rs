@@ -2,16 +2,17 @@
 use atat::{atat_derive::AtatResp, heapless_bytes::Bytes};
 use ublox_sockets::{PeerHandle, SocketHandle};
 
-use super::types::OpenState;
+use super::types::{OpenState, SendStatus};
 
-/// +UUSORD/+UUSORF
+/// +MIPRTCP
 #[derive(Debug, Clone, AtatResp)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct SocketDataAvailable {
     #[at_arg(position = 0)]
-    pub socket: SocketHandle,
+    pub id: PeerHandle,
     #[at_arg(position = 1)]
     pub length: usize,
+    #[at_arg(position = 2)]
+    pub data: Bytes<2048>,
 }
 
 /// +MIPOPEN
@@ -36,4 +37,26 @@ pub struct SocketClosed {
     pub num_or_type: Option<u16>,
     #[at_arg(position = 2)]
     pub close_type: Option<u16>,
+}
+
+/// +MIPSEND
+#[derive(Debug, Clone, AtatResp)]
+pub struct SocketDataSentOver {
+    #[at_arg(position = 0)]
+    pub id: PeerHandle,
+    #[at_arg(position = 1)]
+    pub status: SendStatus,
+    #[at_arg(position = 2)]
+    pub free_size: u16,
+}
+
+/// +MIPPUSH
+#[derive(Debug, Clone, AtatResp)]
+pub struct SocketDataIntoStack {
+    #[at_arg(position = 0)]
+    pub id: PeerHandle,
+    #[at_arg(position = 1)]
+    pub status: SendStatus,
+    #[at_arg(position = 2)]
+    pub accumulated: Option<usize>,
 }

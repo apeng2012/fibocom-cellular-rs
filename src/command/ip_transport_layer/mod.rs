@@ -48,7 +48,7 @@ pub struct SetSocketSslState {
 #[at_cmd("+MIPCLOSE", NoResponse, attempts = 3, timeout_ms = 20000)]
 pub struct CloseSocket {
     #[at_arg(position = 0, len = 1)]
-    pub socket: PeerHandle,
+    pub id: PeerHandle,
 }
 
 /// 25.8 Get Socket Error +USOER
@@ -105,24 +105,39 @@ impl atat::AtatCmd for ConnectSocket {
     }
 }
 
-/// 25.10 Write socket data +USOWR
-///
-/// Writes the specified amount of data to the specified socket, like the BSD
-/// write routine, and returns the number of bytes of data actually written. The
-/// command applies to UDP sockets too, after a +USOCO command. There are three
-/// kinds of syntax:
-/// - Base syntax normal: writing simple strings to the socket, some characters
-///   are forbidden
+/// Write socket data +MIPSEND
 #[derive(Clone, AtatCmd)]
-#[at_cmd("+USOWR", WriteSocketDataResponse)]
-pub struct WriteSocketData<'a> {
-    // len 1 as ublox devices only support 7 sockets but needs to be changed if this changes!
+#[at_cmd("+MIPSEND", NoResponse)]
+pub struct WriteSocketData {
     #[at_arg(position = 0, len = 1)]
-    pub socket: SocketHandle,
-    #[at_arg(position = 1)]
-    pub length: usize,
-    #[at_arg(position = 2, len = 512)]
-    pub data: &'a str,
+    pub id: PeerHandle,
+}
+
+pub struct WriteData<'a> {
+    pub buf: &'a [u8],
+}
+
+pub const WRITE_DATA_MAX_LEN: usize = 1024;
+
+impl atat::AtatCmd for WriteData<'_> {
+    const MAX_LEN: usize = WRITE_DATA_MAX_LEN;
+    const MAX_TIMEOUT_MS: u32 = 20_000;
+    const EXPECTS_RESPONSE_CODE: bool = false;
+
+    type Response = NoResponse;
+
+    fn write(&self, buf: &mut [u8]) -> usize {
+        let len = self.buf.len();
+        buf[..len].copy_from_slice(self.buf);
+        len
+    }
+
+    fn parse(
+        &self,
+        _resp: Result<&[u8], atat::InternalError>,
+    ) -> Result<Self::Response, atat::Error> {
+        Ok(NoResponse)
+    }
 }
 
 /// 25.10 Write socket data +USOWR

@@ -36,6 +36,7 @@ use ublox_sockets::TcpState;
 use ublox_sockets::UdpState;
 
 const MAX_HOSTNAME_LEN: usize = 64;
+const MAX_EGRESS_SIZE: usize = crate::command::ip_transport_layer::WRITE_DATA_MAX_LEN;
 
 pub struct StackResources<const SOCK: usize> {
     sockets: [SocketStorage<'static>; SOCK],
@@ -109,6 +110,8 @@ impl<AT: AtatClient + 'static, const URC_CAPACITY: usize> UbloxStack<AT, URC_CAP
     }
 
     pub async fn run(&self) -> ! {
+        let mut tx_buf = [0u8; MAX_EGRESS_SIZE];
+
         loop {
             // FIXME: It feels like this can be written smarter/simpler?
             let should_tx = poll_fn(|cx| match self.should_tx.load(Ordering::Relaxed) {
@@ -152,7 +155,7 @@ impl<AT: AtatClient + 'static, const URC_CAPACITY: usize> UbloxStack<AT, URC_CAP
                     Self::socket_rx(event, &self.socket);
                 }
                 Either4::Second(_) | Either4::Third(_) => {
-                    if let Some(ev) = self.tx_event() {
+                    if let Some(ev) = self.tx_event(&mut tx_buf) {
                         Self::socket_tx(ev, &self.socket, at).await;
                     }
                 }
@@ -207,11 +210,67 @@ impl<AT: AtatClient + 'static, const URC_CAPACITY: usize> UbloxStack<AT, URC_CAP
             Urc::SocketOpened(so) => {
                 Self::connect_event(SocketHandle(so.id.0 - 1), socket);
             }
+            Urc::SocketDataSentOver(sdso) => {
+                if sdso.status != crate::command::ip_transport_layer::types::SendStatus::Success {
+                    warn!("Socket {} is flowed off", sdso.id.0);
+                    return;
+                }
+                let handle = sdso.id;
+                let mut s = socket.borrow_mut();
+                for (_handle, socket) in s.sockets.iter_mut() {
+                    match socket {
+                        #[cfg(feature = "socket-udp")]
+                        Socket::Udp(udp) if udp.peer_handle == Some(handle) => {
+                            udp.set_state(UdpState::Established);
+                            break;
+                        }
+                        #[cfg(feature = "socket-tcp")]
+                        Socket::Tcp(tcp) if tcp.peer_handle == Some(handle) => {
+                            tcp.set_state(TcpState::Established);
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Urc::SocketDataAvailable(sda) => {
+                let handle = sda.id;
+                let mut s = socket.borrow_mut();
+                for (_handle, socket) in s.sockets.iter_mut() {
+                    match socket {
+                        #[cfg(feature = "socket-udp")]
+                        Socket::Udp(udp) if udp.peer_handle == Some(handle) => {
+                            let n = udp.rx_enqueue_slice(&sda.data);
+                            if n < sda.data.len() {
+                                error!(
+                                    "[{}] UDP RX data overflow! Discarding {} bytes",
+                                    udp.peer_handle,
+                                    sda.data.len() - n
+                                );
+                            }
+                            break;
+                        }
+                        #[cfg(feature = "socket-tcp")]
+                        Socket::Tcp(tcp) if tcp.peer_handle == Some(handle) => {
+                            let n = tcp.rx_enqueue_slice(&sda.data);
+                            if n < sda.data.len() {
+                                error!(
+                                    "[{}] TCP RX data overflow! Discarding {} bytes",
+                                    tcp.peer_handle,
+                                    sda.data.len() - n
+                                );
+                            }
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+            }
             _ => (),
         }
     }
 
-    fn tx_event(&self) -> Option<TxEvent> {
+    fn tx_event<'data>(&self, buf: &'data mut [u8]) -> Option<TxEvent<'data>> {
         let mut s = self.socket.borrow_mut();
         for (hostname, query) in s.dns_queries.iter_mut() {
             if let DnsState::New = query.state {
@@ -258,7 +317,24 @@ impl<AT: AtatClient + 'static, const URC_CAPACITY: usize> UbloxStack<AT, URC_CAP
                         }
                         // We transmit data in all states where we may have data in the buffer,
                         // or the transmit half of the connection is still open.
-                        TcpState::Established | TcpState::CloseWait | TcpState::LastAck => {}
+                        TcpState::Established | TcpState::CloseWait | TcpState::LastAck => {
+                            if let Some(peer_handle) = tcp.peer_handle {
+                                return tcp.tx_dequeue(|payload| {
+                                    let len = core::cmp::min(payload.len(), MAX_EGRESS_SIZE);
+                                    let res = if len != 0 {
+                                        buf[..len].copy_from_slice(&payload[..len]);
+                                        Some(TxEvent::Send {
+                                            peer_handle,
+                                            data: &buf[..len],
+                                        })
+                                    } else {
+                                        None
+                                    };
+
+                                    (len, res)
+                                });
+                            }
+                        }
                         TcpState::FinWait1 => {
                             return Some(TxEvent::Close {
                                 peer_handle: tcp.peer_handle.unwrap(),
@@ -276,7 +352,11 @@ impl<AT: AtatClient + 'static, const URC_CAPACITY: usize> UbloxStack<AT, URC_CAP
         None
     }
 
-    async fn socket_tx(ev: TxEvent, socket: &RefCell<SocketStack>, at: &mut AtHandle<'_, AT>) {
+    async fn socket_tx<'data>(
+        ev: TxEvent<'data>,
+        socket: &RefCell<SocketStack>,
+        at: &mut AtHandle<'_, AT>,
+    ) {
         match ev {
             TxEvent::Connect {
                 socket_handle,
@@ -306,13 +386,45 @@ impl<AT: AtatClient + 'static, const URC_CAPACITY: usize> UbloxStack<AT, URC_CAP
                     }
                 }
             }
-            TxEvent::Send {} => {}
+            TxEvent::Send { peer_handle, data } => {
+                warn!("Sending {} bytes on {}", data.len(), peer_handle.0);
+                if let Err(e) = at
+                    .send(&crate::command::ip_transport_layer::WriteSocketData { id: peer_handle })
+                    .await
+                {
+                    error!("Failed to connect?! {}", e);
+                    return;
+                }
+
+                if let Err(e) = at
+                    .send(&crate::command::ip_transport_layer::WriteData { buf: data })
+                    .await
+                {
+                    error!("Failed to connect?! {}", e);
+                    return;
+                }
+
+                let mut s = socket.borrow_mut();
+                for (_handle, socket) in s.sockets.iter_mut() {
+                    match socket {
+                        #[cfg(feature = "socket-udp")]
+                        Socket::Udp(udp) if udp.peer_handle == Some(peer_handle) => {
+                            break;
+                        }
+                        #[cfg(feature = "socket-tcp")]
+                        Socket::Tcp(tcp) if tcp.peer_handle == Some(peer_handle) => {
+                            // wait +MIPSEND urc
+                            tcp.set_state(TcpState::SynSent);
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+            }
             TxEvent::Close { peer_handle } => {
-                at.send(&crate::command::ip_transport_layer::CloseSocket {
-                    socket: peer_handle,
-                })
-                .await
-                .ok();
+                at.send(&crate::command::ip_transport_layer::CloseSocket { id: peer_handle })
+                    .await
+                    .ok();
             }
             TxEvent::Dns { hostname } => {}
         }
@@ -342,12 +454,15 @@ impl<AT: AtatClient + 'static, const URC_CAPACITY: usize> UbloxStack<AT, URC_CAP
 
 // TODO: This extra data clone step can probably be avoided by adding a
 // waker/context based API to ATAT.
-enum TxEvent {
+enum TxEvent<'data> {
     Connect {
         socket_handle: SocketHandle,
         socket_addr: SocketAddr,
     },
-    Send {},
+    Send {
+        peer_handle: PeerHandle,
+        data: &'data [u8],
+    },
     Close {
         peer_handle: PeerHandle,
     },
@@ -357,7 +472,7 @@ enum TxEvent {
 }
 
 #[cfg(feature = "defmt")]
-impl defmt::Format for TxEvent {
+impl defmt::Format for TxEvent<'_> {
     fn format(&self, fmt: defmt::Formatter) {
         match self {
             TxEvent::Connect { .. } => defmt::write!(fmt, "TxEvent::Connect"),

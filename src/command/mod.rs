@@ -43,17 +43,20 @@ pub enum Urc {
     MobileStationPDNDeactivate,
 
     #[cfg(feature = "internal-network-stack")]
-    #[at_urc("+UUSORD")]
-    SocketDataAvailable(ip_transport_layer::urc::SocketDataAvailable),
+    #[at_urc("+MIPSEND")]
+    SocketDataSentOver(ip_transport_layer::urc::SocketDataSentOver),
     #[cfg(feature = "internal-network-stack")]
-    #[at_urc("+UUSORF")]
-    SocketDataAvailableUDP(ip_transport_layer::urc::SocketDataAvailable),
+    #[at_urc("+MIPRTCP")]
+    SocketDataAvailable(ip_transport_layer::urc::SocketDataAvailable),
     #[cfg(feature = "internal-network-stack")]
     #[at_urc("+MIPCLOSE")]
     SocketClosed(ip_transport_layer::urc::SocketClosed),
     #[cfg(feature = "internal-network-stack")]
     #[at_urc("+MIPOPEN")]
     SocketOpened(ip_transport_layer::urc::SocketOpened),
+    #[cfg(feature = "internal-network-stack")]
+    #[at_urc("+MIPPUSH")]
+    SocketDataIntoStack(ip_transport_layer::urc::SocketDataIntoStack),
 
     #[at_urc("+MIPCALL")]
     DataConnectionActivated(psn::urc::DataConnectionActivated),
