@@ -1,7 +1,9 @@
 //! ### 25 - Internet protocol transport layer Commands
 //!
 
+pub mod complete;
 pub mod responses;
+pub mod streaming;
 pub mod types;
 pub mod urc;
 
@@ -45,7 +47,7 @@ pub struct SetSocketSslState {
 
 /// Close Socket +MIPCLOSE
 #[derive(Clone, AtatCmd)]
-#[at_cmd("+MIPCLOSE", NoResponse, attempts = 3, timeout_ms = 20000)]
+#[at_cmd("+MIPCLOSE", NoResponse)]
 pub struct CloseSocket {
     #[at_arg(position = 0, len = 1)]
     pub id: PeerHandle,
@@ -111,13 +113,15 @@ impl atat::AtatCmd for ConnectSocket {
 pub struct WriteSocketData {
     #[at_arg(position = 0, len = 1)]
     pub id: PeerHandle,
+    #[at_arg(position = 1)]
+    pub lenth: u16,
 }
 
 pub struct WriteData<'a> {
     pub buf: &'a [u8],
 }
 
-pub const WRITE_DATA_MAX_LEN: usize = 1024;
+pub const WRITE_DATA_MAX_LEN: usize = 1400;
 
 impl atat::AtatCmd for WriteData<'_> {
     const MAX_LEN: usize = WRITE_DATA_MAX_LEN;

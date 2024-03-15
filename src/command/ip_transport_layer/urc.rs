@@ -1,18 +1,21 @@
 //! Unsolicited responses for Internet protocol transport layer Commands
 use atat::{atat_derive::AtatResp, heapless_bytes::Bytes};
-use ublox_sockets::{PeerHandle, SocketHandle};
+use heapless::Vec;
+use ublox_sockets::PeerHandle;
 
 use super::types::{OpenState, SendStatus};
 
+pub const DATA_PACKAGE_SIZE: usize = 2048;
+
 /// +MIPRTCP
 #[derive(Debug, Clone, AtatResp)]
-pub struct SocketDataAvailable {
+pub struct SocketReadData {
     #[at_arg(position = 0)]
     pub id: PeerHandle,
     #[at_arg(position = 1)]
     pub length: usize,
     #[at_arg(position = 2)]
-    pub data: Bytes<2048>,
+    pub data: Vec<u8, DATA_PACKAGE_SIZE>,
 }
 
 /// +MIPOPEN
@@ -59,4 +62,15 @@ pub struct SocketDataIntoStack {
     pub status: SendStatus,
     #[at_arg(position = 2)]
     pub accumulated: Option<usize>,
+}
+
+/// +MIPSTAT
+#[derive(Debug, Clone, AtatResp)]
+pub struct BrokenLink {
+    #[at_arg(position = 0)]
+    pub id: PeerHandle,
+    #[at_arg(position = 1)]
+    pub n: u8,
+    #[at_arg(position = 2)]
+    pub acknowledged: Option<usize>,
 }

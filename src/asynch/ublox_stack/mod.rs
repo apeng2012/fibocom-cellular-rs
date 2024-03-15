@@ -14,7 +14,7 @@ use core::task::Poll;
 use crate::asynch::state::Device;
 use crate::command::Urc;
 
-use self::dns::DnsSocket;
+use self::dns::{DnsSocket, DnsState, DnsTable};
 
 use super::state::{self, LinkState};
 use super::AtHandle;
@@ -25,7 +25,7 @@ use embassy_sync::waitqueue::WakerRegistration;
 use embassy_time::{Duration, Ticker};
 use embedded_nal_async::SocketAddr;
 use futures::pin_mut;
-use heapless::String;
+use heapless::{String, Vec};
 use no_std_net::IpAddr;
 use portable_atomic::{AtomicBool, AtomicU8, Ordering};
 use ublox_sockets::{PeerHandle, Socket, SocketHandle, SocketSet, SocketStorage};
@@ -35,7 +35,6 @@ use ublox_sockets::TcpState;
 #[cfg(feature = "socket-udp")]
 use ublox_sockets::UdpState;
 
-const MAX_HOSTNAME_LEN: usize = 64;
 const MAX_EGRESS_SIZE: usize = crate::command::ip_transport_layer::WRITE_DATA_MAX_LEN;
 
 pub struct StackResources<const SOCK: usize> {
@@ -58,31 +57,10 @@ pub struct UbloxStack<AT: AtatClient + 'static, const URC_CAPACITY: usize> {
     link_up: AtomicBool,
 }
 
-enum DnsState {
-    New,
-    Pending,
-    Ok(IpAddr),
-    Err,
-}
-
-struct DnsQuery {
-    state: DnsState,
-    waker: WakerRegistration,
-}
-
-impl DnsQuery {
-    pub fn new() -> Self {
-        Self {
-            state: DnsState::New,
-            waker: WakerRegistration::new(),
-        }
-    }
-}
-
 struct SocketStack {
     sockets: SocketSet<'static>,
     waker: WakerRegistration,
-    dns_queries: heapless::FnvIndexMap<heapless::String<MAX_HOSTNAME_LEN>, DnsQuery, 4>,
+    dns_table: DnsTable,
     dropped_sockets: heapless::Vec<PeerHandle, 3>,
 }
 
@@ -95,7 +73,7 @@ impl<AT: AtatClient + 'static, const URC_CAPACITY: usize> UbloxStack<AT, URC_CAP
 
         let socket = SocketStack {
             sockets,
-            dns_queries: heapless::IndexMap::new(),
+            dns_table: DnsTable::new(),
             waker: WakerRegistration::new(),
             dropped_sockets: heapless::Vec::new(),
         };
@@ -131,10 +109,10 @@ impl<AT: AtatClient + 'static, const URC_CAPACITY: usize> UbloxStack<AT, URC_CAP
 
             let mut device = self.device.borrow_mut();
             let Device {
-                ref mut desired_state_pub_sub,
                 ref mut urc_subscription,
                 ref mut shared,
                 ref mut at,
+                ..
             } = device.deref_mut();
 
             match select4(
@@ -233,7 +211,7 @@ impl<AT: AtatClient + 'static, const URC_CAPACITY: usize> UbloxStack<AT, URC_CAP
                     }
                 }
             }
-            Urc::SocketDataAvailable(sda) => {
+            Urc::SocketReadData(sda) => {
                 let handle = sda.id;
                 let mut s = socket.borrow_mut();
                 for (_handle, socket) in s.sockets.iter_mut() {
@@ -272,11 +250,12 @@ impl<AT: AtatClient + 'static, const URC_CAPACITY: usize> UbloxStack<AT, URC_CAP
 
     fn tx_event<'data>(&self, buf: &'data mut [u8]) -> Option<TxEvent<'data>> {
         let mut s = self.socket.borrow_mut();
-        for (hostname, query) in s.dns_queries.iter_mut() {
+        for query in s.dns_table.table.iter_mut() {
             if let DnsState::New = query.state {
                 query.state = DnsState::Pending;
+                buf[..query.domain_name.len()].copy_from_slice(query.domain_name.as_bytes());
                 return Some(TxEvent::Dns {
-                    hostname: hostname.clone(),
+                    hostname: core::str::from_utf8(&buf[..query.domain_name.len()]).unwrap(),
                 });
             }
         }
@@ -389,10 +368,13 @@ impl<AT: AtatClient + 'static, const URC_CAPACITY: usize> UbloxStack<AT, URC_CAP
             TxEvent::Send { peer_handle, data } => {
                 warn!("Sending {} bytes on {}", data.len(), peer_handle.0);
                 if let Err(e) = at
-                    .send(&crate::command::ip_transport_layer::WriteSocketData { id: peer_handle })
+                    .send(&crate::command::ip_transport_layer::WriteSocketData {
+                        id: peer_handle,
+                        lenth: data.len() as u16,
+                    })
                     .await
                 {
-                    error!("Failed to connect?! {}", e);
+                    error!("Failed to send?! {}", e);
                     return;
                 }
 
@@ -400,7 +382,7 @@ impl<AT: AtatClient + 'static, const URC_CAPACITY: usize> UbloxStack<AT, URC_CAP
                     .send(&crate::command::ip_transport_layer::WriteData { buf: data })
                     .await
                 {
-                    error!("Failed to connect?! {}", e);
+                    error!("Failed to send data?! {}", e);
                     return;
                 }
 
@@ -426,7 +408,48 @@ impl<AT: AtatClient + 'static, const URC_CAPACITY: usize> UbloxStack<AT, URC_CAP
                     .await
                     .ok();
             }
-            TxEvent::Dns { hostname } => {}
+            TxEvent::Dns { hostname } => {
+                match at
+                    .send(&crate::command::dns::ResolveNameIp {
+                        ip_domain_string: hostname,
+                    })
+                    .await
+                {
+                    Ok(rnr) => {
+                        let mut s = socket.borrow_mut();
+                        if let Some(query) = s.dns_table.get_mut(&hostname) {
+                            if query.state == DnsState::Pending {
+                                let mut vec: Vec<u8, 16> = Vec::new();
+                                vec.extend_from_slice(rnr.ip_addr.as_slice()).unwrap();
+                                if let Ok(s) = String::from_utf8(vec) {
+                                    match s.parse::<IpAddr>() {
+                                        Ok(ip_addr) => {
+                                            query.state = DnsState::Resolved(ip_addr);
+                                        }
+                                        Err(_) => {
+                                            query.state = DnsState::Error;
+                                        }
+                                    }
+                                    query.waker.wake();
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        error!("Failed to dns?! {}", e);
+                        let mut s = socket.borrow_mut();
+                        if let Some(query) = s.dns_table.get_mut(&hostname) {
+                            match query.state {
+                                DnsState::Pending => {
+                                    query.state = DnsState::Error;
+                                    query.waker.wake();
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -467,7 +490,7 @@ enum TxEvent<'data> {
         peer_handle: PeerHandle,
     },
     Dns {
-        hostname: heapless::String<MAX_HOSTNAME_LEN>,
+        hostname: &'data str,
     },
 }
 

@@ -12,10 +12,12 @@ use embassy_stm32::time::Hertz;
 use embassy_stm32::usart::{BufferedUart, BufferedUartRx, BufferedUartTx};
 use embassy_stm32::{bind_interrupts, peripherals, Config};
 use embassy_time::{Duration, Timer};
-use no_std_net::Ipv4Addr;
+use embedded_io_async::{Read, Write};
+use embedded_nal_async::{AddrType, Dns, SocketAddr, TcpConnect};
 use static_cell::make_static;
 use ublox_cellular::asynch::state::OperationState;
-use ublox_cellular::asynch::ublox_stack::tcp::TcpSocket;
+use ublox_cellular::asynch::ublox_stack::dns::DnsSocket;
+use ublox_cellular::asynch::ublox_stack::tcp::client::{TcpClient, TcpClientState};
 use ublox_cellular::asynch::ublox_stack::{StackResources, UbloxStack};
 use ublox_cellular::asynch::InternalRunner;
 use ublox_cellular::asynch::Resources;
@@ -193,7 +195,6 @@ const RX_SIZE: usize = INGRESS_BUF_SIZE;
 
 const RX_BUFFER_SIZE: usize = 1024;
 const TX_BUFFER_SIZE: usize = 1024;
-const SERVER_ADDRESS: Ipv4Addr = Ipv4Addr::new(172, 67, 199, 190);
 const HTTP_PORT: u16 = 80;
 
 async fn test_visit_ifconfig(
@@ -202,25 +203,23 @@ async fn test_visit_ifconfig(
         URC_CAPACITY,
     >,
 ) {
+    info!("Get ifconfig.net ip...");
+    let dns = DnsSocket::new(stack);
+    let ip_addr = dns
+        .get_host_by_name("ifconfig.net", AddrType::IPv4)
+        .await
+        .expect("Could not resolve domain name");
+
     info!("Testing visit ifconfig.net...");
+    let tcp_client_state = TcpClientState::<1, TX_BUFFER_SIZE, RX_BUFFER_SIZE>::new();
+    let tcp_client = TcpClient::new(stack, &tcp_client_state);
 
-    let mut rx_buffer = [0; RX_BUFFER_SIZE];
-    let mut tx_buffer = [0; TX_BUFFER_SIZE];
-    let mut socket = TcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
-    // socket.set_timeout(Some(Duration::from_secs(10)));
-
-    // info!(
-    //     "connecting to {:?}:{}...",
-    //     debug2Format(&SERVER_ADDRESS),
-    //     HTTP_PORT
-    // );
-    if let Err(e) = socket.connect((SERVER_ADDRESS, HTTP_PORT)).await {
-        error!("connect error: {:?}", e);
-        return;
-    }
+    let mut socket = TcpConnect::connect(&tcp_client, SocketAddr::new(ip_addr, HTTP_PORT))
+        .await
+        .expect("connect error");
 
     info!("Sending HTTP request...");
-    let request = b"GET / HTTP/1.1\r\nAccept: text/plain\r\nHost: ifconfig.net\r\n\r\n\x1A";
+    let request = b"GET / HTTP/1.1\r\nAccept: text/plain\r\nHost: ifconfig.net\r\n\r\n";
     let bytes_write = socket
         .write(request)
         .await

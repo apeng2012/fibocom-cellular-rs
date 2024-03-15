@@ -523,14 +523,8 @@ impl<'d, AT: AtatClient, C: CellularConfig<'d>, const URC_CAPACITY: usize>
     async fn handle_urc(&mut self, event: Urc) -> Result<(), Error> {
         match event {
             // Handle network URCs
-            Urc::NetworkDetach => warn!("Network detached"),
-            Urc::MobileStationDetach => warn!("Mobile station detached"),
-            Urc::NetworkDeactivate => warn!("Network deactivated"),
-            Urc::MobileStationDeactivate => warn!("Mobile station deactivated"),
-            Urc::NetworkPDNDeactivate => warn!("Network PDN deactivated"),
-            Urc::MobileStationPDNDeactivate => warn!("Mobile station PDN deactivated"),
             #[cfg(feature = "internal-network-stack")]
-            Urc::SocketDataAvailable(_) => warn!("Socket data available"),
+            Urc::SocketReadData(_) => warn!("Socket read data"),
             #[cfg(feature = "internal-network-stack")]
             Urc::SocketDataSentOver(_) => warn!("Socket data sent over"),
 
@@ -559,8 +553,8 @@ impl<'d, AT: AtatClient, C: CellularConfig<'d>, const URC_CAPACITY: usize>
             Urc::SocketOpened(_) => warn!("Socket opened"),
             #[cfg(feature = "internal-network-stack")]
             Urc::SocketDataIntoStack(_) => warn!("SocketDataIntoStack"),
-            Urc::ExtendedPSNetworkRegistration(_) => warn!("Extended PS network registration"),
-            Urc::HttpResponse(_) => warn!("HTTP response"),
+            #[cfg(feature = "internal-network-stack")]
+            Urc::BrokenLink(_) => warn!("BrokenLink"),
         };
         Ok(())
     }
