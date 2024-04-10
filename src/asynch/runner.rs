@@ -100,8 +100,6 @@ impl<'d, AT: AtatClient, C: CellularConfig<'d>, const URC_CAPACITY: usize>
             pin.set_high().map_err(|_| Error::IoPin)?;
         }
         if let Some(pin) = self.config.power_pin() {
-            pin.set_low().map_err(|_| Error::IoPin)?;
-            Timer::after(crate::module_timing::pwr_on_time()).await;
             pin.set_high().map_err(|_| Error::IoPin)?;
             Timer::after(boot_time()).await;
             self.ch.set_power_state(OperationState::PowerUp);
@@ -401,7 +399,14 @@ impl<'d, AT: AtatClient, C: CellularConfig<'d>, const URC_CAPACITY: usize>
                         continue;
                     }
                     let desired_state = desired_state.unwrap();
-                    let _ = self.change_state_to_desired_state(desired_state).await;
+                    while let Err(e) = self.change_state_to_desired_state(desired_state).await {
+                        error!(
+                            "can not change_state_to_desired_state {:?}. power off and try again.",
+                            e
+                        );
+                        self.power_down().await.ok();
+                        self.ch.set_power_state(OperationState::PowerDown);
+                    }
                 }
                 Either::Second(event) => {
                     self.handle_urc(event).await.ok();
@@ -410,16 +415,17 @@ impl<'d, AT: AtatClient, C: CellularConfig<'d>, const URC_CAPACITY: usize>
         }
     }
 
+    /// When desired state is the current power_state, verify the status starting from the PowerDown state
     async fn change_state_to_desired_state(
         &mut self,
         desired_state: OperationState,
     ) -> Result<(), Error> {
-        if 0 >= desired_state as isize - self.ch.state_runner().power_state() as isize {
-            debug!(
-                "Power steps was negative, power down: {}",
-                desired_state as isize - self.ch.state_runner().power_state() as isize
-            );
-            self.power_down().await.ok();
+        let dir = desired_state as isize - self.ch.state_runner().power_state() as isize;
+        if 0 >= dir {
+            debug!("Power steps was negative, power down: {}", dir);
+            if 0 != dir || OperationState::PowerDown == desired_state {
+                self.power_down().await.ok();
+            }
             self.ch.set_power_state(OperationState::PowerDown);
         }
         let start_state = self.ch.state_runner().power_state() as isize;

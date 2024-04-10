@@ -140,22 +140,8 @@ async fn main_task(spawner: Spawner) {
     Timer::after(Duration::from_millis(1000)).await;
     loop {
         control
-            .set_desired_state(OperationState::DataEstablished)
+            .set_desired_state_and_wait_for_completion(OperationState::DataEstablished)
             .await;
-        info!("set_desired_state(PowerState::Alive)");
-        let mut timeout_cnt = 0;
-        while control.power_state() != OperationState::DataEstablished {
-            Timer::after(Duration::from_millis(1000)).await;
-            timeout_cnt += 1;
-            if timeout_cnt > 60 * 3 {
-                timeout_cnt = 0;
-                control.set_desired_state(OperationState::PowerDown).await;
-                control
-                    .set_desired_state(OperationState::DataEstablished)
-                    .await;
-            }
-        }
-        Timer::after(Duration::from_millis(10000)).await;
 
         loop {
             Timer::after(Duration::from_millis(1000)).await;
@@ -165,7 +151,9 @@ async fn main_task(spawner: Spawner) {
             info!("{}", signal_quality);
             if signal_quality.is_err() {
                 let desired_state = control.desired_state();
-                control.set_desired_state(desired_state).await
+                control
+                    .set_desired_state_and_wait_for_completion(desired_state)
+                    .await
             }
             if let Ok(sq) = signal_quality {
                 if let Ok(op) = operator {
@@ -181,11 +169,10 @@ async fn main_task(spawner: Spawner) {
         test_visit_ifconfig(stack).await;
 
         Timer::after(Duration::from_millis(10000)).await;
-        control.set_desired_state(OperationState::PowerDown).await;
-        info!("set_desired_state(PowerState::PowerDown)");
-        while control.power_state() != OperationState::PowerDown {
-            Timer::after(Duration::from_millis(1000)).await;
-        }
+        info!("set_desired_state_and_wait_for_completion(PowerState::PowerDown)");
+        control
+            .set_desired_state_and_wait_for_completion(OperationState::PowerDown)
+            .await;
 
         Timer::after(Duration::from_millis(5000)).await;
     }
