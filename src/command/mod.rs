@@ -46,6 +46,8 @@ pub enum Urc {
 
     #[cfg(feature = "internal-network-stack")]
     SocketReadData(ip_transport_layer::urc::SocketReadData),
+    #[cfg(feature = "internal-network-stack")]
+    CanSocketOpen(ip_transport_layer::urc::CanSocketOpen),
 }
 
 #[derive(Debug, Clone, AtatUrc)]
@@ -89,6 +91,8 @@ impl atat::AtatUrc for Urc {
     fn parse(resp: &[u8]) -> Option<Self::Response> {
         if let Some(urc) = ip_transport_layer::complete::parse_read_data(resp) {
             Some(urc)
+        } else if let Some(urc) = ip_transport_layer::complete::parse_can_socket_open(resp) {
+            Some(urc)
         } else {
             UrcInner::parse(resp).map(|x| x.into())
         }
@@ -99,6 +103,7 @@ impl atat::Parser for Urc {
     fn parse(buf: &[u8]) -> Result<(&[u8], usize), atat::digest::ParseError> {
         let (_, r) = branch::alt((
             ip_transport_layer::streaming::parse_read_data,
+            ip_transport_layer::streaming::parse_can_socket_open,
             urc_helper("+MIPSEND"),
             urc_helper("+MIPCLOSE"),
             urc_helper("+MIPOPEN"),

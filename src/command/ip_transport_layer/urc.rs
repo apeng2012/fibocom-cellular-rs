@@ -31,6 +31,13 @@ pub struct SocketOpened {
     pub listen_port: Option<u16>,
 }
 
+/// +MIPOPEN?
+/// for each socket that can be opened
+#[derive(Debug, Clone)]
+pub struct CanSocketOpen {
+    pub id_list: Vec<PeerHandle, 6>,
+}
+
 /// +MIPCLOSE
 #[derive(Debug, Clone, AtatResp)]
 pub struct SocketClosed {

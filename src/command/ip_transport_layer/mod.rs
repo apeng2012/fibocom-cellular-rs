@@ -61,6 +61,10 @@ pub struct CloseSocket {
 #[at_cmd("+USOER", SocketErrorResponse)]
 pub struct GetSocketError;
 
+#[derive(Clone, AtatCmd)]
+#[at_cmd("+MIPOPEN?", NoResponse)]
+pub struct CanSocketOpen;
+
 /// Open a Socket +MIPOPEN
 pub struct ConnectSocket {
     pub id: PeerHandle,

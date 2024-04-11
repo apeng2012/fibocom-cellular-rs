@@ -558,6 +558,8 @@ impl<'d, AT: AtatClient, C: CellularConfig<'d>, const URC_CAPACITY: usize>
             #[cfg(feature = "internal-network-stack")]
             Urc::SocketOpened(_) => warn!("Socket opened"),
             #[cfg(feature = "internal-network-stack")]
+            Urc::CanSocketOpen(_) => warn!("Socket can open"),
+            #[cfg(feature = "internal-network-stack")]
             Urc::SocketDataIntoStack(_) => warn!("SocketDataIntoStack"),
             #[cfg(feature = "internal-network-stack")]
             Urc::BrokenLink(_) => warn!("BrokenLink"),
