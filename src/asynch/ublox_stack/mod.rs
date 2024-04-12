@@ -62,6 +62,7 @@ struct SocketStack {
     waker: WakerRegistration,
     dns_table: DnsTable,
     dropped_sockets: heapless::Vec<PeerHandle, 3>,
+    can_socket_be_opened: [Option<bool>; 6],
 }
 
 impl<AT: AtatClient + 'static, const URC_CAPACITY: usize> UbloxStack<AT, URC_CAPACITY> {
@@ -76,6 +77,7 @@ impl<AT: AtatClient + 'static, const URC_CAPACITY: usize> UbloxStack<AT, URC_CAP
             dns_table: DnsTable::new(),
             waker: WakerRegistration::new(),
             dropped_sockets: heapless::Vec::new(),
+            can_socket_be_opened: [None; 6],
         };
 
         Self {
@@ -188,6 +190,12 @@ impl<AT: AtatClient + 'static, const URC_CAPACITY: usize> UbloxStack<AT, URC_CAP
             Urc::SocketOpened(so) => {
                 Self::connect_event(SocketHandle(so.id.0 - 1), socket);
             }
+            Urc::CanSocketOpen(cso) => {
+                let mut s = socket.borrow_mut();
+                for (i, oo) in s.can_socket_be_opened.iter_mut().enumerate() {
+                    *oo = Some(!cso.id_list.contains(&PeerHandle(i as u8 + 1)));
+                }
+            }
             Urc::SocketDataSentOver(sdso) => {
                 if sdso.status != crate::command::ip_transport_layer::types::SendStatus::Success {
                     warn!("Socket {} is flowed off", sdso.id.0);
@@ -277,6 +285,9 @@ impl<AT: AtatClient + 'static, const URC_CAPACITY: usize> UbloxStack<AT, URC_CAP
             })
             .unwrap();
 
+        let can_socket_be_opened = s.can_socket_be_opened;
+        let mut reset_be_open: (bool, Option<TxEvent>) = (false, None);
+
         for (handle, socket) in s.sockets.iter_mut().skip(skip as usize) {
             match socket {
                 #[cfg(feature = "socket-udp")]
@@ -288,10 +299,30 @@ impl<AT: AtatClient + 'static, const URC_CAPACITY: usize> UbloxStack<AT, URC_CAP
                     match tcp.state() {
                         TcpState::Closed => {
                             if let Some(addr) = tcp.remote_endpoint() {
-                                return Some(TxEvent::Connect {
-                                    socket_handle: handle,
-                                    socket_addr: addr,
-                                });
+                                let SocketHandle(i) = handle;
+                                if i >= 6 {
+                                    continue;
+                                }
+                                match can_socket_be_opened[i as usize] {
+                                    Some(true) => {
+                                        tcp.set_state(TcpState::Established);
+                                        reset_be_open.0 = true;
+                                        break;
+                                    }
+                                    Some(false) => {
+                                        reset_be_open.0 = true;
+                                        reset_be_open.1 = Some(TxEvent::Connect {
+                                            socket_handle: handle,
+                                            socket_addr: addr,
+                                        });
+                                        break;
+                                    }
+                                    None => {
+                                        return Some(TxEvent::CanBeOpened {
+                                            socket_handle: handle,
+                                        });
+                                    }
+                                }
                             }
                         }
                         // We transmit data in all states where we may have data in the buffer,
@@ -328,7 +359,13 @@ impl<AT: AtatClient + 'static, const URC_CAPACITY: usize> UbloxStack<AT, URC_CAP
             };
         }
 
-        None
+        match reset_be_open {
+            (true, ret) => {
+                s.can_socket_be_opened = [None; 6];
+                ret
+            }
+            _ => None,
+        }
     }
 
     async fn socket_tx<'data>(
@@ -337,6 +374,21 @@ impl<AT: AtatClient + 'static, const URC_CAPACITY: usize> UbloxStack<AT, URC_CAP
         at: &mut AtHandle<'_, AT>,
     ) {
         match ev {
+            TxEvent::CanBeOpened { socket_handle } => {
+                match at
+                    .send(&crate::command::ip_transport_layer::CanSocketOpen)
+                    .await
+                {
+                    Ok(_) => {
+                        let mut s = socket.borrow_mut();
+                        let tcp = s
+                            .sockets
+                            .get_mut::<ublox_sockets::tcp::Socket>(socket_handle);
+                        tcp.set_state(TcpState::SynSent);
+                    }
+                    Err(e) => error!("Failed to can be opened?! {}", e),
+                }
+            }
             TxEvent::Connect {
                 socket_handle,
                 socket_addr,
@@ -478,6 +530,9 @@ impl<AT: AtatClient + 'static, const URC_CAPACITY: usize> UbloxStack<AT, URC_CAP
 // TODO: This extra data clone step can probably be avoided by adding a
 // waker/context based API to ATAT.
 enum TxEvent<'data> {
+    CanBeOpened {
+        socket_handle: SocketHandle,
+    },
     Connect {
         socket_handle: SocketHandle,
         socket_addr: SocketAddr,
@@ -498,6 +553,7 @@ enum TxEvent<'data> {
 impl defmt::Format for TxEvent<'_> {
     fn format(&self, fmt: defmt::Formatter) {
         match self {
+            TxEvent::CanBeOpened { .. } => defmt::write!(fmt, "TxEvent::CanBeOpened"),
             TxEvent::Connect { .. } => defmt::write!(fmt, "TxEvent::Connect"),
             TxEvent::Send { .. } => defmt::write!(fmt, "TxEvent::Send"),
             TxEvent::Close { .. } => defmt::write!(fmt, "TxEvent::Close"),

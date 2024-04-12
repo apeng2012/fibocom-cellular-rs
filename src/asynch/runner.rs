@@ -544,9 +544,9 @@ impl<'d, AT: AtatClient, C: CellularConfig<'d>, const URC_CAPACITY: usize>
                     }
                 } else if dca.b.len() > 1 {
                     match (dca.b[1], dca.b[0]) {
-                        (b',', 0) => self.ch.set_link_state(Some(state::LinkState::Down)),
-                        (b',', 1) => self.ch.set_link_state(Some(state::LinkState::Up)),
-                        (b',', 2) => self.ch.set_link_state(None),
+                        (b',', b'0') => self.ch.set_link_state(Some(state::LinkState::Down)),
+                        (b',', b'1') => self.ch.set_link_state(Some(state::LinkState::Up)),
+                        (b',', b'2') => self.ch.set_link_state(None),
                         (b',', _) => {}
                         (_, _) => self.ch.set_link_state(Some(state::LinkState::Up)),
                     }

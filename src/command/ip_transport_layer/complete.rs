@@ -31,7 +31,7 @@ pub(crate) fn parse_read_data(resp: &[u8]) -> Option<Urc> {
 }
 
 pub(crate) fn parse_can_socket_open(resp: &[u8]) -> Option<Urc> {
-    if let Ok((_reminder, (_, n1, on2, on3, on4, on5, on6))) = sequence::tuple::<_, _, (), _>((
+    if let Ok((reminder, (_, n1, on2, on3, on4, on5, on6))) = sequence::tuple::<_, _, (), _>((
         combinator::recognize(sequence::tuple((
             bytes::streaming::tag(b"+MIPOPEN:"),
             combinator::opt(bytes::complete::tag(b" ")),
@@ -54,34 +54,36 @@ pub(crate) fn parse_can_socket_open(resp: &[u8]) -> Option<Urc> {
         })),
     ))(resp)
     {
-        let mut v: Vec<PeerHandle, 6> = Vec::new();
+        if reminder.is_empty() {
+            let mut v: Vec<PeerHandle, 6> = Vec::new();
 
-        let _ = match n1.to_digit(10).map(|n| PeerHandle(n as u8)) {
-            Some(id) => v.push(id),
-            None => return None,
-        };
-        let _ = match on2.and_then(|c| c.to_digit(10).map(|d| PeerHandle(d as u8))) {
-            Some(id) => v.push(id),
-            None => return Some(Urc::CanSocketOpen(CanSocketOpen { id_list: v })),
-        };
-        let _ = match on3.and_then(|c| c.to_digit(10).map(|d| PeerHandle(d as u8))) {
-            Some(id) => v.push(id),
-            None => return Some(Urc::CanSocketOpen(CanSocketOpen { id_list: v })),
-        };
-        let _ = match on4.and_then(|c| c.to_digit(10).map(|d| PeerHandle(d as u8))) {
-            Some(id) => v.push(id),
-            None => return Some(Urc::CanSocketOpen(CanSocketOpen { id_list: v })),
-        };
-        let _ = match on5.and_then(|c| c.to_digit(10).map(|d| PeerHandle(d as u8))) {
-            Some(id) => v.push(id),
-            None => return Some(Urc::CanSocketOpen(CanSocketOpen { id_list: v })),
-        };
-        let _ = match on6.and_then(|c| c.to_digit(10).map(|d| PeerHandle(d as u8))) {
-            Some(id) => v.push(id),
-            None => return Some(Urc::CanSocketOpen(CanSocketOpen { id_list: v })),
-        };
+            let _ = match n1.to_digit(10).map(|n| PeerHandle(n as u8)) {
+                Some(id) => v.push(id),
+                None => return None,
+            };
+            let _ = match on2.and_then(|c| c.to_digit(10).map(|d| PeerHandle(d as u8))) {
+                Some(id) => v.push(id),
+                None => return Some(Urc::CanSocketOpen(CanSocketOpen { id_list: v })),
+            };
+            let _ = match on3.and_then(|c| c.to_digit(10).map(|d| PeerHandle(d as u8))) {
+                Some(id) => v.push(id),
+                None => return Some(Urc::CanSocketOpen(CanSocketOpen { id_list: v })),
+            };
+            let _ = match on4.and_then(|c| c.to_digit(10).map(|d| PeerHandle(d as u8))) {
+                Some(id) => v.push(id),
+                None => return Some(Urc::CanSocketOpen(CanSocketOpen { id_list: v })),
+            };
+            let _ = match on5.and_then(|c| c.to_digit(10).map(|d| PeerHandle(d as u8))) {
+                Some(id) => v.push(id),
+                None => return Some(Urc::CanSocketOpen(CanSocketOpen { id_list: v })),
+            };
+            let _ = match on6.and_then(|c| c.to_digit(10).map(|d| PeerHandle(d as u8))) {
+                Some(id) => v.push(id),
+                None => return Some(Urc::CanSocketOpen(CanSocketOpen { id_list: v })),
+            };
 
-        return Some(Urc::CanSocketOpen(CanSocketOpen { id_list: v }));
+            return Some(Urc::CanSocketOpen(CanSocketOpen { id_list: v }));
+        }
     }
 
     None
@@ -93,7 +95,7 @@ mod tests {
 
     #[test]
     fn can_parse_can_socket_open() {
-        let res = parse_can_socket_open(b"+MIPOPEN: 1,2,3,4,5,6\r\n").unwrap();
+        let res = parse_can_socket_open(b"+MIPOPEN: 1,2,3,4,5,6").unwrap();
 
         if let Urc::CanSocketOpen(sco) = res {
             let CanSocketOpen { id_list } = sco;
