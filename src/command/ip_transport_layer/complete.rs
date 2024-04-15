@@ -31,7 +31,7 @@ pub(crate) fn parse_read_data(resp: &[u8]) -> Option<Urc> {
 }
 
 pub(crate) fn parse_can_socket_open(resp: &[u8]) -> Option<Urc> {
-    if let Ok((reminder, (_, n1, on2, on3, on4, on5, on6))) = sequence::tuple::<_, _, (), _>((
+    if let Ok((reminder, (_, n1, on2, on3, on4, on5, on6, _))) = sequence::tuple::<_, _, (), _>((
         combinator::recognize(sequence::tuple((
             bytes::streaming::tag(b"+MIPOPEN:"),
             combinator::opt(bytes::complete::tag(b" ")),
@@ -52,6 +52,7 @@ pub(crate) fn parse_can_socket_open(resp: &[u8]) -> Option<Urc> {
         combinator::opt(combinator::flat_map(bytes::streaming::tag(b","), |_| {
             character::streaming::one_of("6")
         })),
+        bytes::complete::tag(b"\r\n"),
     ))(resp)
     {
         if reminder.is_empty() {
@@ -95,7 +96,7 @@ mod tests {
 
     #[test]
     fn can_parse_can_socket_open() {
-        let res = parse_can_socket_open(b"+MIPOPEN: 1,2,3,4,5,6").unwrap();
+        let res = parse_can_socket_open(b"+MIPOPEN: 1,2,3,4,5,6\r\n").unwrap();
 
         if let Urc::CanSocketOpen(sco) = res {
             let CanSocketOpen { id_list } = sco;
@@ -107,6 +108,20 @@ mod tests {
             v.push(PeerHandle(4)).ok();
             v.push(PeerHandle(5)).ok();
             v.push(PeerHandle(6)).ok();
+
+            assert_eq!(v, id_list);
+        }
+    }
+
+    #[test]
+    fn can_parse_can_socket_open_t2() {
+        let res = parse_can_socket_open(b"+MIPOPEN: 1\r\n").unwrap();
+
+        if let Urc::CanSocketOpen(sco) = res {
+            let CanSocketOpen { id_list } = sco;
+
+            let mut v: Vec<PeerHandle, 6> = Vec::new();
+            v.push(PeerHandle(1)).ok();
 
             assert_eq!(v, id_list);
         }

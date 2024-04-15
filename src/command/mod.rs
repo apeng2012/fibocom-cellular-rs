@@ -40,14 +40,14 @@ pub enum Urc {
     #[cfg(feature = "internal-network-stack")]
     SocketDataIntoStack(ip_transport_layer::urc::SocketDataIntoStack),
     #[cfg(feature = "internal-network-stack")]
-    DataConnectionActivated(psn::urc::DataConnectionActivated),
-    #[cfg(feature = "internal-network-stack")]
     BrokenLink(ip_transport_layer::urc::BrokenLink),
 
     #[cfg(feature = "internal-network-stack")]
     SocketReadData(ip_transport_layer::urc::SocketReadData),
     #[cfg(feature = "internal-network-stack")]
     CanSocketOpen(ip_transport_layer::urc::CanSocketOpen),
+    #[cfg(feature = "internal-network-stack")]
+    DataConnectionActivated(psn::urc::DataConnectionActivated),
 }
 
 #[derive(Debug, Clone, AtatUrc)]
@@ -65,9 +65,6 @@ pub enum UrcInner {
     #[at_urc("+MIPPUSH")]
     SocketDataIntoStack(ip_transport_layer::urc::SocketDataIntoStack),
     #[cfg(feature = "internal-network-stack")]
-    #[at_urc("+MIPCALL")]
-    DataConnectionActivated(psn::urc::DataConnectionActivated),
-    #[cfg(feature = "internal-network-stack")]
     #[at_urc("+MIPSTAT")]
     BrokenLink(ip_transport_layer::urc::BrokenLink),
 }
@@ -79,7 +76,6 @@ impl From<UrcInner> for Urc {
             UrcInner::SocketClosed(x) => Urc::SocketClosed(x),
             UrcInner::SocketOpened(x) => Urc::SocketOpened(x),
             UrcInner::SocketDataIntoStack(x) => Urc::SocketDataIntoStack(x),
-            UrcInner::DataConnectionActivated(x) => Urc::DataConnectionActivated(x),
             UrcInner::BrokenLink(x) => Urc::BrokenLink(x),
         }
     }
@@ -93,6 +89,10 @@ impl atat::AtatUrc for Urc {
             Some(urc)
         } else if let Some(urc) = ip_transport_layer::complete::parse_can_socket_open(resp) {
             Some(urc)
+        } else if let Some(urc) = psn::complete::parse_ip_only(resp) {
+            Some(urc)
+        } else if let Some(urc) = psn::complete::parse_ip_status(resp) {
+            Some(urc)
         } else {
             UrcInner::parse(resp).map(|x| x.into())
         }
@@ -104,6 +104,8 @@ impl atat::Parser for Urc {
         let (_, r) = branch::alt((
             ip_transport_layer::streaming::parse_read_data,
             ip_transport_layer::streaming::parse_can_socket_open,
+            psn::streaming::parse_ip_only,
+            psn::streaming::parse_ip_status,
             urc_helper("+MIPSEND"),
             urc_helper("+MIPCLOSE"),
             urc_helper("+MIPOPEN"),

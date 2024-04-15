@@ -1,16 +1,16 @@
 //! Unsolicited responses for Packet Switched Data Services Commands
 use super::types::{
     EPSNetworkRegistrationStat, ExtendedPSNetworkRegistrationState, GPRSNetworkRegistrationStat,
+    StatusConnection,
 };
 use crate::command::network_service::types::RatAct;
-use atat::{atat_derive::AtatResp, heapless_bytes::Bytes};
+use atat::atat_derive::AtatResp;
 use heapless::String;
 
 /// +MIPCALL
-#[derive(Debug, Clone, AtatResp)]
+#[derive(Debug, Clone)]
 pub struct DataConnectionActivated {
-    #[at_arg(position = 0)]
-    pub b: Bytes<41>,
+    pub sc: StatusConnection,
 }
 
 /// 18.27 GPRS network registration status +CGREG

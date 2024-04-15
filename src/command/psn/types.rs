@@ -3,6 +3,8 @@ use embedded_nal::IpAddr;
 use heapless::String;
 use serde::{Deserialize, Serialize};
 
+use crate::asynch::state::LinkState;
+
 /// Indicates the state of PDP context activation
 #[derive(Clone, PartialEq, Eq, AtatEnum)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -11,6 +13,23 @@ pub enum PDPContextStatus {
     Deactivated = 0,
     /// 1: activated
     Activated = 1,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum StatusConnection {
+    Disconnect,
+    Connected(IpAddr),
+    Busy,
+}
+
+impl From<StatusConnection> for Option<LinkState> {
+    fn from(value: StatusConnection) -> Self {
+        match value {
+            StatusConnection::Disconnect => Some(LinkState::Down),
+            StatusConnection::Connected(_) => Some(LinkState::Up),
+            StatusConnection::Busy => None,
+        }
+    }
 }
 
 #[derive(Clone, PartialEq, Eq, AtatEnum)]

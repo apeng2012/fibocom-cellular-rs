@@ -533,26 +533,11 @@ impl<'d, AT: AtatClient, C: CellularConfig<'d>, const URC_CAPACITY: usize>
             Urc::SocketReadData(_) => warn!("Socket read data"),
             #[cfg(feature = "internal-network-stack")]
             Urc::SocketDataSentOver(_) => warn!("Socket data sent over"),
-
+            #[cfg(feature = "internal-network-stack")]
             Urc::DataConnectionActivated(dca) => {
                 warn!("Data connection activated");
-                if dca.b.len() == 1 {
-                    if dca.b[0] == b'0' {
-                        self.ch.set_link_state(Some(state::LinkState::Down));
-                    } else {
-                        self.ch.set_link_state(None);
-                    }
-                } else if dca.b.len() > 1 {
-                    match (dca.b[1], dca.b[0]) {
-                        (b',', b'0') => self.ch.set_link_state(Some(state::LinkState::Down)),
-                        (b',', b'1') => self.ch.set_link_state(Some(state::LinkState::Up)),
-                        (b',', b'2') => self.ch.set_link_state(None),
-                        (b',', _) => {}
-                        (_, _) => self.ch.set_link_state(Some(state::LinkState::Up)),
-                    }
-                }
+                self.ch.set_link_state(dca.sc.into());
             }
-
             #[cfg(feature = "internal-network-stack")]
             Urc::SocketClosed(_) => warn!("Socket closed"),
             #[cfg(feature = "internal-network-stack")]
