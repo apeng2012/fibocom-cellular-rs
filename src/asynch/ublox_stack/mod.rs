@@ -63,6 +63,7 @@ struct SocketStack {
     dns_table: DnsTable,
     dropped_sockets: heapless::Vec<PeerHandle, 3>,
     can_socket_be_opened: [Option<bool>; 6],
+    try_connect_cnt: [usize; 6],
 }
 
 impl<AT: AtatClient + 'static, const URC_CAPACITY: usize> UbloxStack<AT, URC_CAPACITY> {
@@ -78,6 +79,7 @@ impl<AT: AtatClient + 'static, const URC_CAPACITY: usize> UbloxStack<AT, URC_CAP
             waker: WakerRegistration::new(),
             dropped_sockets: heapless::Vec::new(),
             can_socket_be_opened: [None; 6],
+            try_connect_cnt: [0; 6],
         };
 
         Self {
@@ -166,6 +168,27 @@ impl<AT: AtatClient + 'static, const URC_CAPACITY: usize> UbloxStack<AT, URC_CAP
 
     fn socket_rx(event: Urc, socket: &RefCell<SocketStack>) {
         match event {
+            Urc::BrokenLink(bl) => {
+                let handle = bl.id;
+                let mut s = socket.borrow_mut();
+                for (_handle, socket) in s.sockets.iter_mut() {
+                    match socket {
+                        #[cfg(feature = "socket-udp")]
+                        Socket::Udp(udp) if udp.peer_handle == Some(handle) => {
+                            udp.peer_handle = None;
+                            udp.set_state(UdpState::Closed);
+                            break;
+                        }
+                        #[cfg(feature = "socket-tcp")]
+                        Socket::Tcp(tcp) if tcp.peer_handle == Some(handle) => {
+                            tcp.peer_handle = None;
+                            tcp.set_state(TcpState::TimeWait);
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+            }
             Urc::SocketClosed(sc) => {
                 let handle = sc.id;
                 let mut s = socket.borrow_mut();
@@ -200,23 +223,6 @@ impl<AT: AtatClient + 'static, const URC_CAPACITY: usize> UbloxStack<AT, URC_CAP
                 if sdso.status != crate::command::ip_transport_layer::types::SendStatus::Success {
                     warn!("Socket {} is flowed off", sdso.id.0);
                     return;
-                }
-                let handle = sdso.id;
-                let mut s = socket.borrow_mut();
-                for (_handle, socket) in s.sockets.iter_mut() {
-                    match socket {
-                        #[cfg(feature = "socket-udp")]
-                        Socket::Udp(udp) if udp.peer_handle == Some(handle) => {
-                            udp.set_state(UdpState::Established);
-                            break;
-                        }
-                        #[cfg(feature = "socket-tcp")]
-                        Socket::Tcp(tcp) if tcp.peer_handle == Some(handle) => {
-                            tcp.set_state(TcpState::Established);
-                            break;
-                        }
-                        _ => {}
-                    }
                 }
             }
             Urc::SocketReadData(sda) => {
@@ -288,6 +294,9 @@ impl<AT: AtatClient + 'static, const URC_CAPACITY: usize> UbloxStack<AT, URC_CAP
         let can_socket_be_opened = s.can_socket_be_opened;
         let mut reset_be_open: (bool, Option<TxEvent>) = (false, None);
 
+        let try_connect_cnt = s.try_connect_cnt;
+        let mut change_try_connect_cnt: [Option<usize>; 6] = [None; 6];
+
         for (handle, socket) in s.sockets.iter_mut().skip(skip as usize) {
             match socket {
                 #[cfg(feature = "socket-udp")]
@@ -310,11 +319,18 @@ impl<AT: AtatClient + 'static, const URC_CAPACITY: usize> UbloxStack<AT, URC_CAP
                                         break;
                                     }
                                     Some(false) => {
-                                        reset_be_open.0 = true;
-                                        reset_be_open.1 = Some(TxEvent::Connect {
-                                            socket_handle: handle,
-                                            socket_addr: addr,
-                                        });
+                                        if try_connect_cnt[i as usize] > 5 {
+                                            change_try_connect_cnt[i as usize] = Some(0);
+                                            tcp.set_state(TcpState::TimeWait);
+                                        } else {
+                                            change_try_connect_cnt[i as usize] =
+                                                Some(try_connect_cnt[i as usize] + 1);
+                                            reset_be_open.0 = true;
+                                            reset_be_open.1 = Some(TxEvent::Connect {
+                                                socket_handle: handle,
+                                                socket_addr: addr,
+                                            });
+                                        }
                                         break;
                                     }
                                     None => {
@@ -328,6 +344,14 @@ impl<AT: AtatClient + 'static, const URC_CAPACITY: usize> UbloxStack<AT, URC_CAP
                         // We transmit data in all states where we may have data in the buffer,
                         // or the transmit half of the connection is still open.
                         TcpState::Established | TcpState::CloseWait | TcpState::LastAck => {
+                            let SocketHandle(i) = handle;
+                            if i >= 6 {
+                                continue;
+                            }
+                            if try_connect_cnt[i as usize] != 0 {
+                                change_try_connect_cnt[i as usize] = Some(0);
+                                break;
+                            }
                             if let Some(peer_handle) = tcp.peer_handle {
                                 return tcp.tx_dequeue(|payload| {
                                     let len = core::cmp::min(payload.len(), MAX_EGRESS_SIZE);
@@ -357,6 +381,12 @@ impl<AT: AtatClient + 'static, const URC_CAPACITY: usize> UbloxStack<AT, URC_CAP
                 }
                 _ => {}
             };
+        }
+
+        for (i, c) in change_try_connect_cnt.iter().enumerate() {
+            if let Some(n) = c {
+                s.try_connect_cnt[i] = *n;
+            }
         }
 
         match reset_be_open {
@@ -436,23 +466,6 @@ impl<AT: AtatClient + 'static, const URC_CAPACITY: usize> UbloxStack<AT, URC_CAP
                 {
                     error!("Failed to send data?! {}", e);
                     return;
-                }
-
-                let mut s = socket.borrow_mut();
-                for (_handle, socket) in s.sockets.iter_mut() {
-                    match socket {
-                        #[cfg(feature = "socket-udp")]
-                        Socket::Udp(udp) if udp.peer_handle == Some(peer_handle) => {
-                            break;
-                        }
-                        #[cfg(feature = "socket-tcp")]
-                        Socket::Tcp(tcp) if tcp.peer_handle == Some(peer_handle) => {
-                            // wait +MIPSEND urc
-                            tcp.set_state(TcpState::SynSent);
-                            break;
-                        }
-                        _ => {}
-                    }
                 }
             }
             TxEvent::Close { peer_handle } => {

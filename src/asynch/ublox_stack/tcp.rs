@@ -448,7 +448,6 @@ pub mod client {
     {
         fn drop(&mut self) {
             unsafe {
-                self.socket.close();
                 self.state.pool.free(self.bufs);
             }
         }

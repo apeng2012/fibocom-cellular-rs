@@ -547,7 +547,10 @@ impl<'d, AT: AtatClient, C: CellularConfig<'d>, const URC_CAPACITY: usize>
             #[cfg(feature = "internal-network-stack")]
             Urc::SocketDataIntoStack(_) => warn!("SocketDataIntoStack"),
             #[cfg(feature = "internal-network-stack")]
-            Urc::BrokenLink(_) => warn!("BrokenLink"),
+            Urc::BrokenLink(_) => {
+                warn!("BrokenLink");
+                self.ch.set_link_state(Some(LinkState::Down));
+            }
         };
         Ok(())
     }
@@ -604,7 +607,7 @@ impl<'d, AT: AtatClient, C: CellularConfig<'d>, const URC_CAPACITY: usize>
         self.ch.set_link_state(None);
 
         for _ in 0..20 {
-            self.at.send(&command::psn::GetStatusIp).await?;
+            self.at.send(&command::psn::GetStatusIp).await.ok();
 
             if let Ok(event) = with_timeout(
                 Duration::from_millis(200),

@@ -37,21 +37,26 @@ pub(crate) fn parse_can_socket_open(resp: &[u8]) -> Option<Urc> {
             combinator::opt(bytes::complete::tag(b" ")),
         ))),
         character::streaming::one_of("123456"),
-        combinator::opt(combinator::flat_map(bytes::streaming::tag(b","), |_| {
-            character::streaming::one_of("23456")
-        })),
-        combinator::opt(combinator::flat_map(bytes::streaming::tag(b","), |_| {
-            character::streaming::one_of("3456")
-        })),
-        combinator::opt(combinator::flat_map(bytes::streaming::tag(b","), |_| {
-            character::streaming::one_of("456")
-        })),
-        combinator::opt(combinator::flat_map(bytes::streaming::tag(b","), |_| {
-            character::streaming::one_of("56")
-        })),
-        combinator::opt(combinator::flat_map(bytes::streaming::tag(b","), |_| {
-            character::streaming::one_of("6")
-        })),
+        combinator::opt(sequence::preceded(
+            bytes::streaming::tag(b","),
+            character::streaming::one_of("23456"),
+        )),
+        combinator::opt(sequence::preceded(
+            bytes::streaming::tag(b","),
+            character::streaming::one_of("3456"),
+        )),
+        combinator::opt(sequence::preceded(
+            bytes::streaming::tag(b","),
+            character::streaming::one_of("456"),
+        )),
+        combinator::opt(sequence::preceded(
+            bytes::streaming::tag(b","),
+            character::streaming::one_of("56"),
+        )),
+        combinator::opt(sequence::preceded(
+            bytes::streaming::tag(b","),
+            character::streaming::one_of("6"),
+        )),
         bytes::complete::tag(b"\r\n"),
     ))(resp)
     {
