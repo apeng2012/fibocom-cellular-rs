@@ -4,7 +4,7 @@ use atat::nom::{bytes, character, combinator, error::ParseError, sequence, IResu
 pub fn parse_read_data<'a, Error: ParseError<&'a [u8]>>(
     buf: &'a [u8],
 ) -> IResult<&'a [u8], (&'a [u8], usize), Error> {
-    let (reminder, (_, frame)) = sequence::tuple((
+    let (reminder, (_, frame, _)) = sequence::tuple((
         bytes::streaming::tag("\r\n"),
         combinator::recognize(sequence::tuple((
             bytes::streaming::tag(b"+MIPRTCP:"),
@@ -18,9 +18,10 @@ pub fn parse_read_data<'a, Error: ParseError<&'a [u8]>>(
                 )))
             }),
         ))),
+        bytes::streaming::tag("\r\n"),
     ))(buf)?;
 
-    Ok((reminder, (frame, 2 + frame.len())))
+    Ok((reminder, (frame, 2 + frame.len() + 2)))
 }
 
 /// Matches the equivalent of regex: \r\n+MIPOPEN: [1-6],[2-6],[3-6]+\r\n
@@ -67,9 +68,9 @@ mod tests {
     #[test]
     fn can_parse_read_data() {
         let (reminder, result) =
-            parse_read_data::<()>(b"\r\n+MIPRTCP: 5,8,HTTP\r\n\r\nTAIL").unwrap();
+            parse_read_data::<()>(b"\r\n+MIPRTCP: 5,6,HTTP\r\n\r\nTAIL").unwrap();
         assert_eq!(b"TAIL", reminder);
-        assert_eq!(b"+MIPRTCP: 5,8,HTTP\r\n\r\n", result.0);
+        assert_eq!(b"+MIPRTCP: 5,6,HTTP\r\n", result.0);
         assert_eq!(24, result.1);
     }
 

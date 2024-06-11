@@ -5,7 +5,7 @@ use heapless::Vec;
 use ublox_sockets::PeerHandle;
 
 pub(crate) fn parse_read_data(resp: &[u8]) -> Option<Urc> {
-    if let Ok((_reminder, (_, id, _, (_, data)))) = sequence::tuple::<_, _, (), _>((
+    if let Ok((reminder, (_, id, _, (_, data)))) = sequence::tuple::<_, _, (), _>((
         combinator::recognize(sequence::tuple((
             bytes::streaming::tag(b"+MIPRTCP:"),
             combinator::opt(bytes::complete::tag(b" ")),
@@ -17,14 +17,16 @@ pub(crate) fn parse_read_data(resp: &[u8]) -> Option<Urc> {
         }),
     ))(resp)
     {
-        return Vec::from_slice(data)
-            .ok()
-            .map(|vec| SocketReadData {
-                id: PeerHandle(id),
-                length: data.len(),
-                data: vec,
-            })
-            .map(Urc::SocketReadData);
+        if reminder.is_empty() {
+            return Vec::from_slice(data)
+                .ok()
+                .map(|vec| SocketReadData {
+                    id: PeerHandle(id),
+                    length: data.len(),
+                    data: vec,
+                })
+                .map(Urc::SocketReadData);
+        }
     }
 
     None
