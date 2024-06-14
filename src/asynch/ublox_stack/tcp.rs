@@ -441,6 +441,10 @@ pub mod client {
                 bufs,
             })
         }
+
+        pub fn state(&self) -> tcp::State {
+            self.socket.state()
+        }
     }
 
     impl<'d, const N: usize, const TX_SZ: usize, const RX_SZ: usize> Drop

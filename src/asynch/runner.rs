@@ -547,10 +547,7 @@ impl<'d, AT: AtatClient, C: CellularConfig<'d>, const URC_CAPACITY: usize>
             #[cfg(feature = "internal-network-stack")]
             Urc::SocketDataIntoStack(_) => warn!("SocketDataIntoStack"),
             #[cfg(feature = "internal-network-stack")]
-            Urc::BrokenLink(_) => {
-                warn!("BrokenLink");
-                self.ch.set_link_state(Some(LinkState::Down));
-            }
+            Urc::BrokenLink(_) => warn!("Broken protocol stack"),
         };
         Ok(())
     }
